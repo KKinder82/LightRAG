@@ -523,12 +523,15 @@ class LightRAG:
         default=float(os.getenv("COSINE_THRESHOLD", 0.2))
     )
 
+    # 提供 ollama信息服务。
     ollama_server_infos: Optional[OllamaServerInfos] = field(default=None)
     """Configuration for Ollama server information."""
 
     _storages_status: StoragesStatus = field(default=StoragesStatus.NOT_CREATED)
 
     def __post_init__(self):
+        # kg: 知识图谱
+        # 初始化共享数据
         from lightrag.kg.shared_storage import (
             initialize_share_data,
         )
@@ -553,6 +556,7 @@ class LightRAG:
         if hasattr(self, "log_file_path"):
             delattr(self, "log_file_path")
 
+        # 实际执行（共享数据）初始化
         initialize_share_data()
 
         if not os.path.exists(self.working_dir):
@@ -932,8 +936,8 @@ class LightRAG:
         doc_relations = {}  # doc_id -> set of relation_pairs (as tuples)
 
         # Get all nodes and edges from graph
-        all_nodes = await self.chunk_entity_relation_graph.get_all_nodes()
-        all_edges = await self.chunk_entity_relation_graph.get_all_edges()
+        all_nodes = await self.chunk_entity_relation_graph.get_all_nodes() # 获取所有结点
+        all_edges = await self.chunk_entity_relation_graph.get_all_edges() # 获取所有边
 
         # Process all nodes once
         for node in all_nodes:

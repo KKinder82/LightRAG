@@ -76,17 +76,20 @@ def get_default_host(binding_type: str) -> str:
     )  # fallback to ollama if unknown
 
 
+# 验证认证配置，确保在启用 JWT 认证时 TOKEN_SECRET 已正确设置
 def validate_auth_configuration(args: argparse.Namespace) -> None:
     """Reject insecure JWT auth settings before the API starts."""
     auth_accounts = (getattr(args, "auth_accounts", "") or "").strip()
     token_secret = (getattr(args, "token_secret", "") or "").strip()
 
     if auth_accounts and (not token_secret or token_secret == DEFAULT_TOKEN_SECRET):
+        # 如果配置了 AUTH_ACCOUNTS，但 TOKEN_SECRET 为空或使用默认值，则抛出错误
         raise ValueError(
             "TOKEN_SECRET must be explicitly set to a non-default value when AUTH_ACCOUNTS is configured."
         )
 
 
+# 分析参数。
 def parse_args() -> argparse.Namespace:
     """
     Parse command line arguments with environment variable fallback
@@ -484,10 +487,11 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+# 调整 Uvicorn 模式下的 workers 配置，如果 workers > 1 则强制设置为 1，并记录日志警告用户
 def update_uvicorn_mode_config():
     # If in uvicorn mode and workers > 1, force it to 1 and log warning
     if global_args.workers > 1:
-        original_workers = global_args.workers
+        original_workers = global_args.workers # 原始 workers 数量
         global_args.workers = 1
         # Log warning directly here
         logging.debug(
@@ -500,6 +504,7 @@ _global_args = None
 _initialized = False
 
 
+# 初始化配置的
 def initialize_config(args=None, force=False):
     """Initialize global configuration
 

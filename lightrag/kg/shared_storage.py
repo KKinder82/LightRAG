@@ -1109,6 +1109,7 @@ def get_data_init_lock(enable_logging: bool = False) -> UnifiedLock:
             "Shared data not initialized. Call initialize_share_data() before using locks!"
         )
     async_lock = _async_locks.get("data_init_lock") if _is_multiprocess else None
+    # UnifiedLock 是一个上下文类。
     return UnifiedLock(
         lock=_data_init_lock,
         is_async=not _is_multiprocess,

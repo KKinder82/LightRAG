@@ -231,6 +231,7 @@ class InsertTextRequest(BaseModel):
     Attributes:
         text: The text content to be inserted into the RAG system
         file_source: Source of the text (optional)
+        folder_id: Target folder ID for the document (optional)
     """
 
     text: str = Field(
@@ -239,6 +240,9 @@ class InsertTextRequest(BaseModel):
     )
     file_source: Optional[str] = Field(
         default=None, min_length=0, description="File Source"
+    )
+    folder_id: Optional[str] = Field(
+        default=None, description="Target folder ID for the document"
     )
 
     @field_validator("text", mode="after")
@@ -256,6 +260,7 @@ class InsertTextRequest(BaseModel):
             "example": {
                 "text": "This is a sample text to be inserted into the RAG system.",
                 "file_source": "Source of the text (optional)",
+                "folder_id": None,
             }
         }
     )
@@ -267,6 +272,7 @@ class InsertTextsRequest(BaseModel):
     Attributes:
         texts: List of text contents to be inserted into the RAG system
         file_sources: Sources of the texts (optional)
+        folder_id: Target folder ID for all documents in this request (optional)
     """
 
     texts: list[str] = Field(
@@ -275,6 +281,9 @@ class InsertTextsRequest(BaseModel):
     )
     file_sources: Optional[list[str]] = Field(
         default=None, min_length=0, description="Sources of the texts"
+    )
+    folder_id: Optional[str] = Field(
+        default=None, description="Target folder ID for all documents in this request"
     )
 
     @field_validator("texts", mode="after")
@@ -302,6 +311,7 @@ class InsertTextsRequest(BaseModel):
                 "file_sources": [
                     "First file source (optional)",
                 ],
+                "folder_id": None,
             }
         }
     )
@@ -478,6 +488,14 @@ class DocStatusResponse(BaseModel):
         default=None, description="Additional metadata about the document"
     )
     file_path: str = Field(description="Path to the document file")
+    folder_id: Optional[str] = Field(
+        default=None, description="ID of the folder this document belongs to"
+    )
+    folder_path: Optional[str] = Field(
+        default=None,
+        description="Human-readable folder path (e.g. 'Root / Sub-folder'). "
+        "Populated only when the caller requests folder context.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -617,6 +635,8 @@ class DocumentsRequest(BaseModel):
         page_size: Number of documents per page (10-200)
         sort_field: Field to sort by ('created_at', 'updated_at', 'id', 'file_path')
         sort_direction: Sort direction ('asc' or 'desc')
+        folder_id: Restrict results to documents in this folder (optional)
+        include_subfolders: Include documents from sub-folders when folder_id is set
     """
 
     status_filter: Optional[DocStatus] = Field(
@@ -632,6 +652,15 @@ class DocumentsRequest(BaseModel):
     sort_direction: Literal["asc", "desc"] = Field(
         default="desc", description="Sort direction"
     )
+    folder_id: Optional[str] = Field(
+        default=None,
+        description="Restrict results to documents in this folder. "
+        "None means no folder filter (return all documents).",
+    )
+    include_subfolders: bool = Field(
+        default=True,
+        description="When folder_id is set, also include documents from sub-folders.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -641,6 +670,8 @@ class DocumentsRequest(BaseModel):
                 "page_size": 50,
                 "sort_field": "updated_at",
                 "sort_direction": "desc",
+                "folder_id": None,
+                "include_subfolders": True,
             }
         }
     )
@@ -1229,7 +1260,10 @@ def _extract_xlsx(file_bytes: bytes) -> str:
 
 
 async def pipeline_enqueue_file(
-    rag: LightRAG, file_path: Path, track_id: str = None
+    rag: LightRAG,
+    file_path: Path,
+    track_id: str = None,
+    folder_id: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Add a file to the queue for processing
 
@@ -1605,6 +1639,17 @@ async def pipeline_enqueue_file(
                     content, file_paths=file_path.name, track_id=track_id
                 )
 
+                # Tag document with folder_id if provided
+                if folder_id:
+                    sanitized = sanitize_text_for_encoding(content)
+                    doc_id = compute_mdhash_id(sanitized, prefix="doc-")
+                    existing = await rag.doc_status.get_by_id(doc_id)
+                    if existing:
+                        meta = existing.get("metadata") or {}
+                        meta["folder_id"] = folder_id
+                        existing["metadata"] = meta
+                        await rag.doc_status.upsert({doc_id: existing})
+
                 logger.info(
                     f"Successfully extracted and enqueued file: {file_path.name}"
                 )
@@ -1686,17 +1731,23 @@ async def pipeline_enqueue_file(
                 logger.error(f"Error deleting file {file_path}: {str(e)}")
 
 
-async def pipeline_index_file(rag: LightRAG, file_path: Path, track_id: str = None):
+async def pipeline_index_file(
+    rag: LightRAG,
+    file_path: Path,
+    track_id: str = None,
+    folder_id: Optional[str] = None,
+):
     """Index a file with track_id
 
     Args:
         rag: LightRAG instance
         file_path: Path to the saved file
         track_id: Optional tracking ID
+        folder_id: Optional folder ID to tag the document with
     """
     try:
         success, returned_track_id = await pipeline_enqueue_file(
-            rag, file_path, track_id
+            rag, file_path, track_id, folder_id=folder_id
         )
         if success:
             await rag.apipeline_process_enqueue_documents()
@@ -1773,6 +1824,31 @@ async def pipeline_index_texts(
         input=texts, file_paths=normalized_file_sources, track_id=track_id
     )
     await rag.apipeline_process_enqueue_documents()
+
+
+async def pipeline_index_texts_with_folder_id(
+    rag: LightRAG,
+    texts: List[str],
+    file_sources: List[str] = None,
+    track_id: str = None,
+    folder_id: Optional[str] = None,
+):
+    """Index texts and tag resulting documents with folder_id.
+
+    Wraps pipeline_index_texts and, after completion, updates doc_status
+    metadata with the given folder_id for each indexed document.
+    """
+    await pipeline_index_texts(rag, texts, file_sources, track_id)
+    if folder_id and texts:
+        for text in texts:
+            sanitized = sanitize_text_for_encoding(text)
+            doc_id = compute_mdhash_id(sanitized, prefix="doc-")
+            existing = await rag.doc_status.get_by_id(doc_id)
+            if existing:
+                meta = existing.get("metadata") or {}
+                meta["folder_id"] = folder_id
+                existing["metadata"] = meta
+                await rag.doc_status.upsert({doc_id: existing})
 
 
 async def run_scanning_process(
@@ -2085,7 +2161,10 @@ async def background_delete_documents(
 
 
 def create_document_routes(
-    rag: LightRAG, doc_manager: DocumentManager, api_key: Optional[str] = None
+    rag: LightRAG,
+    doc_manager: DocumentManager,
+    api_key: Optional[str] = None,
+    folder_manager: Optional[Any] = None,
 ):
     # Create combined auth dependency for document routes
     combined_auth = get_combined_auth_dependency(api_key)
@@ -2119,7 +2198,9 @@ def create_document_routes(
         "/upload", response_model=InsertResponse, dependencies=[Depends(combined_auth)]
     )
     async def upload_to_input_dir(
-        background_tasks: BackgroundTasks, file: UploadFile = File(...)
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        folder_id: Optional[str] = None,
     ):
         """
         Upload a file to the input directory and index it.
@@ -2267,7 +2348,9 @@ def create_document_routes(
             track_id = generate_track_id("upload")
 
             # Add to background tasks and get track_id
-            background_tasks.add_task(pipeline_index_file, rag, file_path, track_id)
+            background_tasks.add_task(
+                pipeline_index_file, rag, file_path, track_id, folder_id=folder_id
+            )
 
             return InsertResponse(
                 status="success",
@@ -2343,13 +2426,23 @@ def create_document_routes(
             # Generate track_id for text insertion
             track_id = generate_track_id("insert")
 
-            background_tasks.add_task(
-                pipeline_index_texts,
-                rag,
-                [request.text],
-                file_sources=[request.file_source],
-                track_id=track_id,
-            )
+            if request.folder_id:
+                background_tasks.add_task(
+                    pipeline_index_texts_with_folder_id,
+                    rag,
+                    [request.text],
+                    file_sources=[request.file_source],
+                    track_id=track_id,
+                    folder_id=request.folder_id,
+                )
+            else:
+                background_tasks.add_task(
+                    pipeline_index_texts,
+                    rag,
+                    [request.text],
+                    file_sources=[request.file_source],
+                    track_id=track_id,
+                )
 
             return InsertResponse(
                 status="success",
@@ -2426,13 +2519,23 @@ def create_document_routes(
             # Generate track_id for texts insertion
             track_id = generate_track_id("insert")
 
-            background_tasks.add_task(
-                pipeline_index_texts,
-                rag,
-                request.texts,
-                file_sources=request.file_sources,
-                track_id=track_id,
-            )
+            if request.folder_id:
+                background_tasks.add_task(
+                    pipeline_index_texts_with_folder_id,
+                    rag,
+                    request.texts,
+                    file_sources=request.file_sources,
+                    track_id=track_id,
+                    folder_id=request.folder_id,
+                )
+            else:
+                background_tasks.add_task(
+                    pipeline_index_texts,
+                    rag,
+                    request.texts,
+                    file_sources=request.file_sources,
+                    track_id=track_id,
+                )
 
             return InsertResponse(
                 status="success",
@@ -3184,24 +3287,58 @@ def create_document_routes(
                 return result
 
             query_task_create_start = time.perf_counter()
-            docs_task = asyncio.create_task(
-                _timed_call(
-                    "get_docs_paginated",
-                    rag.doc_status.get_docs_paginated(
-                        status_filter=request.status_filter,
-                        page=request.page,
-                        page_size=request.page_size,
-                        sort_field=request.sort_field,
-                        sort_direction=request.sort_direction,
-                    ),
+
+            # Resolve folder IDs when folder_id filter is requested
+            if request.folder_id is not None and folder_manager is not None:
+                # Collect all relevant folder IDs (folder itself + descendants)
+                if request.include_subfolders:
+                    descendant_ids = await folder_manager.get_descendant_ids(
+                        request.folder_id
+                    )
+                    effective_folder_ids = [request.folder_id] + descendant_ids
+                else:
+                    effective_folder_ids = [request.folder_id]
+
+                docs_task = asyncio.create_task(
+                    _timed_call(
+                        "get_docs_by_folder_ids",
+                        rag.doc_status.get_docs_by_folder_ids(
+                            folder_ids=effective_folder_ids,
+                            status_filter=request.status_filter,
+                            page=request.page,
+                            page_size=request.page_size,
+                            sort_field=request.sort_field,
+                            sort_direction=request.sort_direction,
+                        ),
+                    )
                 )
-            )
-            status_counts_task = asyncio.create_task(
-                _timed_call(
-                    "get_all_status_counts",
-                    rag.doc_status.get_all_status_counts(),
+                status_counts_task = asyncio.create_task(
+                    _timed_call(
+                        "get_status_counts_by_folder_ids",
+                        rag.doc_status.get_status_counts_by_folder_ids(
+                            folder_ids=effective_folder_ids,
+                        ),
+                    )
                 )
-            )
+            else:
+                docs_task = asyncio.create_task(
+                    _timed_call(
+                        "get_docs_paginated",
+                        rag.doc_status.get_docs_paginated(
+                            status_filter=request.status_filter,
+                            page=request.page,
+                            page_size=request.page_size,
+                            sort_field=request.sort_field,
+                            sort_direction=request.sort_direction,
+                        ),
+                    )
+                )
+                status_counts_task = asyncio.create_task(
+                    _timed_call(
+                        "get_all_status_counts",
+                        rag.doc_status.get_all_status_counts(),
+                    )
+                )
             query_task_create_elapsed = time.perf_counter() - query_task_create_start
             performance_timing_log(
                 "[documents/paginated][%s] Query tasks created in %.4fs",
@@ -3237,6 +3374,7 @@ def create_document_routes(
                         error_msg=doc.error_msg,
                         metadata=doc.metadata,
                         file_path=normalize_file_path(doc.file_path),
+                        folder_id=doc.metadata.get("folder_id") if doc.metadata else None,
                     )
                 )
 

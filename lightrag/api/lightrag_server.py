@@ -49,6 +49,8 @@ from lightrag.api.routers.document_routes import (
     DocumentManager,
     create_document_routes,
 )
+from lightrag.api.routers.folder_routes import create_folder_routes
+from lightrag.kg.folder_storage import FolderManager
 from lightrag.api.routers.query_routes import create_query_routes
 from lightrag.api.routers.graph_routes import create_graph_routes
 from lightrag.api.routers.ollama_api import OllamaAPI
@@ -152,6 +154,7 @@ class LLMConfigCache:
 
 
 def check_frontend_build():
+    # 检查前端构建状态，确保在开发环境中如果源代码更新了但没有重新构建，会发出警告提示用户重新构建
     """Check if frontend is built and optionally check if source is up-to-date
 
     Returns:
@@ -164,6 +167,7 @@ def check_frontend_build():
 
     # 1. Check if build files exist
     if not index_html.exists():
+        # 找不到构建文件，发出明显的警告提示用户需要构建前端
         ASCIIColors.yellow("\n" + "=" * 80)
         ASCIIColors.yellow("WARNING: Frontend Not Built")
         ASCIIColors.yellow("=" * 80)
@@ -280,12 +284,14 @@ def check_frontend_build():
         return (True, False)  # Assume assets exist and up-to-date on error
 
 
+# 创建APP
 def create_app(args):
     # Check frontend build first and get status
     webui_assets_exist, is_frontend_outdated = check_frontend_build()
 
     # Create unified API version display with warning symbol if frontend is outdated
     api_version_display = (
+        # is_frontend_outdated 是否过时，如果过时则在版本号后面添加警告符号
         f"{__api_version__}⚠️" if is_frontend_outdated else __api_version__
     )
 
@@ -352,6 +358,7 @@ def create_app(args):
             # Initialize database connections
             # Note: initialize_storages() now auto-initializes pipeline_status for rag.workspace
             await rag.initialize_storages()
+            await folder_kv.initialize()
 
             # Data migration regardless of storage implementation
             await rag.check_and_migrate_data()
@@ -363,6 +370,7 @@ def create_app(args):
         finally:
             # Clean up database connections
             await rag.finalize_storages()
+            await folder_kv.finalize()
 
             if "LIGHTRAG_GUNICORN_MODE" not in os.environ:
                 # Only perform cleanup in Uvicorn single-process mode
@@ -453,6 +461,7 @@ def create_app(args):
     )
 
     # Create combined auth dependency for all endpoints
+    # 获取联合认证方法。
     combined_auth = get_combined_auth_dependency(api_key)
 
     def get_workspace_from_request(request: Request) -> str | None:
@@ -680,6 +689,7 @@ def create_app(args):
         provider_embedding_dim = None
 
         try:
+            # api 格式
             if binding == "openai":
                 from lightrag.llm.openai import openai_embed
 
@@ -711,6 +721,7 @@ def create_app(args):
 
             # Extract attributes if provider is an EmbeddingFunc
             if provider_func and isinstance(provider_func, EmbeddingFunc):
+                # 判断 provider_func 是否是 EmbeddingFunc 的实例，如果是，则提取 max_token_size 和 embedding_dim 属性
                 provider_max_token_size = provider_func.max_token_size
                 provider_embedding_dim = provider_func.embedding_dim
                 logger.debug(
@@ -733,6 +744,7 @@ def create_app(args):
         # Step 3: Create optimized embedding function (calls underlying function directly)
         # Note: When model is None, each binding will use its own default model
         async def optimized_embedding_function(texts, embedding_dim=None):
+            # 优化 embedding function，直接调用底层函数，避免重复包装。根据绑定类型传递正确的参数。
             try:
                 if binding == "lollms":
                     from lightrag.llm.lollms import lollms_embed
@@ -890,6 +902,7 @@ def create_app(args):
 
         return embedding_func_instance
 
+    # 获取 llm 配置的超时设置，优先级为环境变量 > 默认值
     llm_timeout = get_env_value("LLM_TIMEOUT", DEFAULT_LLM_TIMEOUT, int)
     embedding_timeout = get_env_value(
         "EMBEDDING_TIMEOUT", DEFAULT_EMBEDDING_TIMEOUT, int
@@ -926,6 +939,7 @@ def create_app(args):
     import inspect
 
     # Create the EmbeddingFunc instance (now returns complete EmbeddingFunc with max_token_size)
+    # 创建优化的嵌入函数实例（现在返回完整的 EmbeddingFunc，包括 max_token_size）
     embedding_func = create_optimized_embedding_function(
         config_cache=config_cache,
         binding=args.embedding_binding,
@@ -940,6 +954,7 @@ def create_app(args):
 
     # Check if the underlying function signature has embedding_dim parameter
     sig = inspect.signature(embedding_func.func)
+    # 根据底层函数的参数签名检查是否存在 embedding_dim 参数，这对于决定是否发送维度信息非常重要
     has_embedding_dim_param = "embedding_dim" in sig.parameters
 
     # Determine send_dimensions value based on binding type
@@ -958,6 +973,7 @@ def create_app(args):
             dimension_control = "by not hasparam"
 
     # Set send_dimensions on the EmbeddingFunc instance
+    # 嵌入函数
     embedding_func.send_dimensions = send_dimensions
 
     logger.info(
@@ -984,27 +1000,31 @@ def create_app(args):
     # Configure rerank function based on args.rerank_bindingparameter
     rerank_model_func = None
     if args.rerank_binding != "null":
+        # 增加重排序功能，根据 args.rerank_binding 参数选择对应的重排序函数，并从环境变量或提供者默认值中获取配置。
         from lightrag.rerank import cohere_rerank, jina_rerank, ali_rerank
 
         # Map rerank binding to corresponding function
         rerank_functions = {
-            "cohere": cohere_rerank,
-            "jina": jina_rerank,
-            "aliyun": ali_rerank,
+            "cohere": cohere_rerank, # Cohere 重排序函数
+            "jina": jina_rerank, # Cohere 重排序函数
+            "aliyun": ali_rerank, # Cohere 重排序函数
         }
 
         # Select the appropriate rerank function based on binding
         selected_rerank_func = rerank_functions.get(args.rerank_binding)
         if not selected_rerank_func:
+            # 如果选择了不受支持的重排序绑定，记录错误并抛出异常
             logger.error(f"Unsupported rerank binding: {args.rerank_binding}")
             raise ValueError(f"Unsupported rerank binding: {args.rerank_binding}")
 
         # Get default values from selected_rerank_func if args values are None
         if args.rerank_model is None or args.rerank_binding_host is None:
+            # 参数没有提供，尝试从重排序函数的参数签名中获取默认值
             sig = inspect.signature(selected_rerank_func)
 
             # Set default model if args.rerank_model is None
             if args.rerank_model is None and "model" in sig.parameters:
+                # 从重排序函数的参数签名中获取 model 参数的默认值，如果存在则使用它作为默认重排序模型
                 default_model = sig.parameters["model"].default
                 if default_model != inspect.Parameter.empty:
                     args.rerank_model = default_model
@@ -1095,14 +1115,23 @@ def create_app(args):
         logger.error(f"Failed to initialize LightRAG: {e}")
         raise
 
+    # Create folder KV storage and FolderManager
+    folder_kv = rag.key_string_value_json_storage_cls(  # type: ignore[call-arg]
+        namespace="doc_folders",
+        workspace=rag.workspace,
+        embedding_func=None,
+    )
+    folder_manager = FolderManager(folder_kv, rag.workspace)
+
     # Add routes
-    app.include_router(
-        create_document_routes(
+    app.include_router(create_document_routes(
             rag,
             doc_manager,
             api_key,
+            folder_manager=folder_manager,
         )
     )
+    app.include_router(create_folder_routes(rag, folder_manager, api_key))
     app.include_router(create_query_routes(rag, api_key, args.top_k))
     app.include_router(create_graph_routes(rag, api_key))
 
@@ -1512,7 +1541,7 @@ def main():
     # Configure logging before parsing args
     configure_logging()
     update_uvicorn_mode_config()
-    display_splash_screen(global_args)
+    display_splash_screen(global_args) # type: ignore
 
     # Note: Signal handlers are NOT registered here because:
     # - Uvicorn has built-in signal handling that properly calls lifespan shutdown

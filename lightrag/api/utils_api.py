@@ -50,6 +50,7 @@ def check_env_file():
 
     if not os.path.exists(env_path):
         warning_msg = "Warning: Startup directory must contain .env file for multi-instance support."
+        #  含有 print 功能。
         ASCIIColors.yellow(warning_msg)
 
         # Check if running in interactive terminal
@@ -62,10 +63,12 @@ def check_env_file():
 
     is_valid, error_message = validate_runtime_target_from_env_file(env_path)
     if not is_valid:
+        # 无效
         for line in error_message.splitlines():
             ASCIIColors.red(line)
         return False
 
+    # 有效
     return True
 
 
@@ -73,6 +76,8 @@ def check_env_file():
 whitelist_paths = global_args.whitelist_paths.split(",")
 
 # Pre-compile path matching patterns
+# 内容为 url:profix or url, 以逗号分隔，
+# 支持前缀匹配（以 /* 结尾）和完全匹配。比如 /health, /docs/*, /public/* 等。
 whitelist_patterns: List[Tuple[str, bool]] = []
 for path in whitelist_paths:
     path = path.strip()
@@ -88,6 +93,7 @@ for path in whitelist_paths:
 auth_configured = bool(auth_handler.accounts)
 
 
+# 获取合并的用户认证依赖项
 def get_combined_auth_dependency(api_key: Optional[str] = None):
     """
     Create a combined authentication dependency that implements authentication logic
@@ -117,24 +123,28 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
             name="X-API-Key", auto_error=False, description="API Key Authentication"
         )
 
+
     async def combined_dependency(
         request: Request,
         response: Response,  # Added: needed to return new token via response header
         token: str = Security(oauth2_scheme),
-        api_key_header_value: Optional[str] = None
-        if api_key_header is None
-        else Security(api_key_header),
+        api_key_header_value: Optional[str] = None if api_key_header is None else Security(api_key_header),
     ):
+        # 认证逻辑实现：
+
         # 1. Check if path is in whitelist
         path = request.url.path
         for pattern, is_prefix in whitelist_patterns:
-            if (is_prefix and path.startswith(pattern)) or (
-                not is_prefix and path == pattern
-            ):
+            # whitelist：<pattern>/* =>is_prefix：true
+            # 白名单路径匹配：如果配置项以 /* 结尾，则匹配所有以该路径为前缀的请求；否则，要求完全匹配。
+            if (is_prefix and path.startswith(pattern)) \
+               or ( not is_prefix and path == pattern):
+                # 匹配成功，立即返回，允许访问 
                 return  # Whitelist path, allow access
 
         # 2. Validate token first if provided in the request (Ensure 401 error if token is invalid)
         if token:
+            # 验证 token 的有效性，如果无效，立即返回 401 错误；如果有效，根据配置决定是否允许访问（比如是否接受 guest 角色的 token）
             try:
                 token_info = auth_handler.validate_token(token)
 
@@ -165,8 +175,8 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
                                     auth_handler.guest_expire_hours
                                     if role == "guest"
                                     else auth_handler.expire_hours
-                                )
-                                total_seconds = total_hours * 3600
+                                ) # 小时
+                                total_seconds = total_hours * 3600 # 转换为秒
 
                                 # Issue new token if remaining time < threshold
                                 if (
@@ -176,6 +186,7 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
                                     # ========== Rate Limiting Check ==========
                                     username = token_info["username"]
                                     current_time = time.time()
+                                    # 根据 username 获取上次续期时间，如果距离上次续期时间过短，则跳过续期，避免频繁续期导致性能问题或安全风险。
                                     last_renewal = _token_renewal_cache.get(username, 0)
                                     time_since_last_renewal = (
                                         current_time - last_renewal
@@ -183,15 +194,18 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
 
                                     # Only renew if enough time has passed since last renewal
                                     if time_since_last_renewal >= _RENEWAL_MIN_INTERVAL:
+                                        # 生成新 token 并通过响应头返回给客户端，同时更新续期缓存中的时间戳。
                                         new_token = auth_handler.create_token(
                                             username=username,
                                             role=role,
                                             metadata=token_info.get("metadata", {}),
                                         )
                                         # Return new token via response header
+                                        # 通过响应头返回新 token，客户端可以选择是否使用这个新 token 进行后续请求，以实现无缝续期体验。
                                         response.headers["X-New-Token"] = new_token
 
                                         # Update renewal cache
+                                        # 缓冲续期时间戳，记录上次续期时间，单位为秒。
                                         _token_renewal_cache[username] = current_time
 
                                         # Optional: log renewal
@@ -213,12 +227,15 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
 
                 # Accept guest token if no auth is configured
                 if not auth_configured and token_info.get("role") == "guest":
+                    # 没有配置认证时，接受 guest 角色的 token，允许访问
                     return
                 # Accept non-guest token if auth is configured
                 if auth_configured and token_info.get("role") != "guest":
+                    # 配置了认证时，接受非 guest 角色的 token，允许访问
                     return
 
                 # Token validation failed, immediately return 401 error
+                # token 验证失败，立即返回 401 错误，拒绝访问
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid token. Please login again.",
@@ -231,6 +248,7 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
 
         # 3. Acept all request if no API protection needed
         if not auth_configured and not api_key_configured:
+            # 没有配置认证且没有配置 API key，接受所有请求，允许访问
             return
 
         # 4. Validate API key if provided and API-Key authentication is configured
@@ -239,12 +257,14 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
             and api_key_header_value
             and api_key_header_value == api_key
         ):
+            # API key 验证成功，允许访问
             return  # API key validation successful
 
         ### Authentication failed ####
 
         # if password authentication is configured but not provided, ensure 401 error if auth_configured
         if auth_configured and not token:
+            # 配置了密码认证但请求中没有提供 token，确保返回 401 错误，提示用户需要登录认证。
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="No credentials provided. Please login.",
@@ -252,6 +272,7 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
 
         # if api key is provided but validation failed
         if api_key_header_value:
+            # 提供了 API key 但验证失败，返回 403 错误，提示 API key 无效。
             raise HTTPException(
                 status_code=HTTP_403_FORBIDDEN,
                 detail="Invalid API Key",
@@ -259,12 +280,14 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
 
         # if api_key_configured but not provided
         if api_key_configured and not api_key_header_value:
+            # 配置了 API key 认证但请求中没有提供 API key，返回 403 错误，提示需要 API key。
             raise HTTPException(
                 status_code=HTTP_403_FORBIDDEN,
                 detail="API Key required",
             )
 
         # Otherwise: refuse access and return 403 error
+        # 其他情况， 拒绝访问，返回 403 错误，提示需要 API key 或登录认证。
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN,
             detail="API Key required or login authentication required.",
@@ -282,7 +305,7 @@ def display_splash_screen(args: argparse.Namespace) -> None:
     """
     # Banner
     # Banner
-    top_border = "╔══════════════════════════════════════════════════════════════╗"
+    top_border =    "╔══════════════════════════════════════════════════════════════╗"
     bottom_border = "╚══════════════════════════════════════════════════════════════╝"
     width = len(top_border) - 4  # width inside the borders
 

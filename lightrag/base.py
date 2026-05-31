@@ -168,6 +168,16 @@ class QueryParam:
     containing citation information for the retrieved content.
     """
 
+    folder_ids: list[str] | None = None
+    """Restrict retrieval scope to documents within the specified folder IDs.
+    None or empty list means retrieve from all documents.
+    """
+
+    include_subfolders: bool = True
+    """When folder_ids is non-empty, whether to automatically include documents
+    from descendant sub-folders.
+    """
+
 
 @dataclass
 class StorageNameSpace(ABC):
@@ -749,6 +759,28 @@ class BaseGraphStorage(StorageNameSpace, ABC):
         """
 
 
+@dataclass
+class FolderInfo:
+    """Document folder data structure for multi-level folder management."""
+
+    id: str
+    """Folder unique ID, format: 'folder-{uuid4}'"""
+    name: str
+    """Folder name, unique within the same parent_id + workspace scope"""
+    workspace: str
+    """Workspace this folder belongs to"""
+    created_at: str
+    """ISO 8601 creation timestamp"""
+    updated_at: str
+    """ISO 8601 last update timestamp"""
+    parent_id: str | None = None
+    """Parent folder ID; None means root folder"""
+    description: str = ""
+    """Folder description (optional)"""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Extension fields"""
+
+
 class DocStatus(str, Enum):
     """Document processing status"""
 
@@ -873,6 +905,99 @@ class DocStatusStorage(BaseKVStorage, ABC):
             dict[str, Any] | None: Document data if found, None otherwise
             Returns the same format as get_by_ids method
         """
+
+    async def get_docs_by_folder_ids(
+        self,
+        folder_ids: list[str],
+        status_filter: "DocStatus | None" = None,
+        page: int = 1,
+        page_size: int = 50,
+        sort_field: str = "updated_at",
+        sort_direction: str = "desc",
+    ) -> "tuple[list[tuple[str, DocProcessingStatus]], int]":
+        """Get documents filtered by folder IDs with pagination support.
+
+        Default implementation: loads all documents via get_docs_paginated and
+        filters in memory.  Backends that support efficient server-side filtering
+        should override this method.
+        """
+        folder_id_set = set(folder_ids)
+        all_matching: list[tuple[str, "DocProcessingStatus"]] = []
+
+        # Iterate all pages of the full doc list
+        cur_page = 1
+        batch_size = 200
+        while True:
+            batch, total = await self.get_docs_paginated(
+                status_filter=status_filter,
+                page=cur_page,
+                page_size=batch_size,
+                sort_field=sort_field,
+                sort_direction=sort_direction,
+            )
+            for doc_id, doc in batch:
+                if doc.metadata.get("folder_id") in folder_id_set:
+                    all_matching.append((doc_id, doc))
+            if len(batch) < batch_size:
+                break
+            cur_page += 1
+
+        total_count = len(all_matching)
+        if page < 1:
+            page = 1
+        if page_size < 10:
+            page_size = 10
+        start = (page - 1) * page_size
+        end = start + page_size
+        return all_matching[start:end], total_count
+
+    async def get_doc_ids_by_folder_ids(
+        self, folder_ids: list[str]
+    ) -> list[str]:
+        """Get all document IDs belonging to the specified folder IDs.
+
+        Default implementation: loads all documents via get_docs_paginated and
+        filters in memory.  Backends should override for efficiency.
+        """
+        folder_id_set = set(folder_ids)
+        result: list[str] = []
+        cur_page = 1
+        batch_size = 200
+        while True:
+            batch, _ = await self.get_docs_paginated(
+                status_filter=None, page=cur_page, page_size=batch_size
+            )
+            for doc_id, doc in batch:
+                if doc.metadata.get("folder_id") in folder_id_set:
+                    result.append(doc_id)
+            if len(batch) < batch_size:
+                break
+            cur_page += 1
+        return result
+
+    async def get_status_counts_by_folder_ids(
+        self, folder_ids: list[str]
+    ) -> dict[str, int]:
+        """Get document status counts filtered by folder IDs.
+
+        Default implementation: loads all documents via get_docs_paginated and
+        aggregates in memory.  Backends should override for efficiency.
+        """
+        folder_id_set = set(folder_ids)
+        counts: dict[str, int] = {status.value: 0 for status in DocStatus}
+        cur_page = 1
+        batch_size = 200
+        while True:
+            batch, _ = await self.get_docs_paginated(
+                status_filter=None, page=cur_page, page_size=batch_size
+            )
+            for doc_id, doc in batch:
+                if doc.metadata.get("folder_id") in folder_id_set:
+                    counts[doc.status.value] += 1
+            if len(batch) < batch_size:
+                break
+            cur_page += 1
+        return counts
 
 
 class StoragesStatus(str, Enum):

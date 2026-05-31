@@ -394,6 +394,111 @@ class JsonDocStatusStorage(DocStatusStorage):
 
         return None
 
+    async def get_docs_by_folder_ids(
+        self,
+        folder_ids: list[str],
+        status_filter: DocStatus | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        sort_field: str = "updated_at",
+        sort_direction: str = "desc",
+    ) -> tuple[list[tuple[str, DocProcessingStatus]], int]:
+        """Get documents filtered by folder IDs with pagination support."""
+        if page < 1:
+            page = 1
+        if page_size < 10:
+            page_size = 10
+        elif page_size > 200:
+            page_size = 200
+
+        if sort_field not in ["created_at", "updated_at", "id", "file_path"]:
+            sort_field = "updated_at"
+        if sort_direction.lower() not in ["asc", "desc"]:
+            sort_direction = "desc"
+
+        folder_id_set = set(folder_ids)
+        all_docs = []
+
+        async with self._storage_lock:
+            for doc_id, doc_data in self._data.items():
+                # Apply folder filter
+                doc_folder_id = doc_data.get("metadata", {}).get("folder_id")
+                if doc_folder_id not in folder_id_set:
+                    continue
+
+                # Apply status filter
+                if (
+                    status_filter is not None
+                    and doc_data.get("status") != status_filter.value
+                ):
+                    continue
+
+                try:
+                    data = doc_data.copy()
+                    data.pop("content", None)
+                    if not data.get("file_path"):
+                        data["file_path"] = "no-file-path"
+                    if "metadata" not in data:
+                        data["metadata"] = {}
+                    if "error_msg" not in data:
+                        data["error_msg"] = None
+
+                    doc_status = DocProcessingStatus(**data)
+
+                    if sort_field == "id":
+                        doc_status._sort_key = doc_id
+                    elif sort_field == "file_path":
+                        from lightrag.utils import get_pinyin_sort_key
+                        doc_status._sort_key = get_pinyin_sort_key(
+                            getattr(doc_status, sort_field, "")
+                        )
+                    else:
+                        doc_status._sort_key = getattr(doc_status, sort_field, "")
+
+                    all_docs.append((doc_id, doc_status))
+                except (KeyError, TypeError) as e:
+                    logger.error(
+                        f"[{self.workspace}] Error processing document {doc_id}: {e}"
+                    )
+                    continue
+
+        reverse_sort = sort_direction.lower() == "desc"
+        all_docs.sort(
+            key=lambda x: getattr(x[1], "_sort_key", ""), reverse=reverse_sort
+        )
+        for doc_id, doc in all_docs:
+            if hasattr(doc, "_sort_key"):
+                delattr(doc, "_sort_key")
+
+        total_count = len(all_docs)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        return all_docs[start_idx:end_idx], total_count
+
+    async def get_doc_ids_by_folder_ids(self, folder_ids: list[str]) -> list[str]:
+        """Get all document IDs belonging to the specified folder IDs."""
+        folder_id_set = set(folder_ids)
+        result: list[str] = []
+        async with self._storage_lock:
+            for doc_id, doc_data in self._data.items():
+                doc_folder_id = doc_data.get("metadata", {}).get("folder_id")
+                if doc_folder_id in folder_id_set:
+                    result.append(doc_id)
+        return result
+
+    async def get_status_counts_by_folder_ids(
+        self, folder_ids: list[str]
+    ) -> dict[str, int]:
+        """Get document status counts filtered by folder IDs."""
+        folder_id_set = set(folder_ids)
+        counts = {status.value: 0 for status in DocStatus}
+        async with self._storage_lock:
+            for doc_data in self._data.values():
+                doc_folder_id = doc_data.get("metadata", {}).get("folder_id")
+                if doc_folder_id in folder_id_set:
+                    counts[doc_data["status"]] += 1
+        return counts
+
     async def drop(self) -> dict[str, str]:
         """Drop all document status data from storage and clean up resources
 

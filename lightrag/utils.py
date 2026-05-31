@@ -475,6 +475,7 @@ class EmbeddingFunc:
                     "Possible circular reference detected."
                 )
             # Unwrap to get the original function
+            # 指向最终的底层函数，跳过中间的包装层
             self.func = self.func.func
 
         if unwrap_count > 0:
@@ -2345,6 +2346,7 @@ def check_storage_env_vars(storage_name: str) -> None:
     from lightrag.kg import STORAGE_ENV_REQUIREMENTS
 
     required_vars = STORAGE_ENV_REQUIREMENTS.get(storage_name, [])
+    # 确失的
     missing_vars = [var for var in required_vars if var not in os.environ]
 
     if missing_vars:

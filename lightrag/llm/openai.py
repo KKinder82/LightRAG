@@ -89,6 +89,7 @@ EMBEDDING_USE_BASE64: bool = os.getenv("EMBEDDING_USE_BASE64", "true").lower() i
 
 
 def _get_tiktoken_encoding_for_model(model: str) -> Any:
+    # tiktoken 是分词器。
     """Get tiktoken encoding for the specified model with caching.
 
     Args:
@@ -98,6 +99,8 @@ def _get_tiktoken_encoding_for_model(model: str) -> Any:
         The tiktoken encoding for the model.
     """
     if model not in _TIKTOKEN_ENCODING_CACHE:
+        # 如果不在缓存中，尝试获取模型的编码，如果失败则回退到 cl100k_base 编码。 其中 cl 表 chat language model，100k 表示支持最多 100k 个 token。
+        # 现在在还有 o200k_base 编码，o 是 omni 的缩写。专门用于 OpenAI 的新一代模型（如 o3、o4-mini、gpt-4.1、gpt-4o 等），这些模型使用了新的编码方式，支持更长的上下文和更高效的编码。
         try:
             _TIKTOKEN_ENCODING_CACHE[model] = tiktoken.encoding_for_model(model)
         except KeyError:
@@ -743,9 +746,9 @@ async def openai_embed(
     max_token_size: int | None = None,
     client_configs: dict[str, Any] | None = None,
     token_tracker: Any | None = None,
-    use_azure: bool = False,
-    azure_deployment: str | None = None,
-    api_version: str | None = None,
+    use_azure: bool = False, # 使用Azure OpenAI服务而不是标准OpenAI。当use_azure=True时，创建AsyncAzureOpenAI客户端。默认值为False。
+    azure_deployment: str | None = None, # Azure OpenAI部署名称，仅在use_azure=True时使用。如果未指定，则回退到AZURE_EMBEDDING_DEPLOYMENT环境变量。
+    api_version: str | None = None, # Azure OpenAI API版本（例如"2024-02-15-preview"），仅在use_azure=True时使用。如果未指定，则回退到AZURE_EMBEDDING_API_VERSION环境变量。
 ) -> np.ndarray:
     """Generate embeddings for a list of texts using OpenAI's API with automatic text truncation.
 
@@ -785,6 +788,7 @@ async def openai_embed(
             environment variable.
 
     Returns:
+        返回 embeddings 的 numpy 数组，每个输入文本对应一个嵌入向量。 
         A numpy array of embeddings, one per input text.
 
     Raises:

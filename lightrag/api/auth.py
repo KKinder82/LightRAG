@@ -133,13 +133,14 @@ class AuthHandler:
         try:
             # Explicitly exclude 'none' to prevent algorithm confusion attacks
             allowed_algorithms = [self.algorithm]
+            # 允许的算法。
             if "none" in (a.lower() for a in allowed_algorithms):
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Insecure JWT algorithm configuration",
                 )
-            payload = jwt.decode(token, self.secret, algorithms=allowed_algorithms)
-            expire_timestamp = payload["exp"]
+            payload = jwt.decode(token, self.secret, algorithms=allowed_algorithms) # 解码
+            expire_timestamp = payload["exp"] # 过程时间
             expire_time = datetime.fromtimestamp(expire_timestamp, timezone.utc)
 
             if datetime.now(timezone.utc) > expire_time:

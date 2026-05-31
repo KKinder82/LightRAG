@@ -29,6 +29,7 @@ class RuntimeEnvironment:
 
 
 def _read_cgroup_content() -> str:
+    # 尽最大可能 读取 cgroup 元数据，实现对容器的检测. effort 
     """Best-effort read of cgroup metadata for container detection."""
 
     for candidate in ("/proc/1/cgroup", "/proc/self/cgroup"):
@@ -39,9 +40,11 @@ def _read_cgroup_content() -> str:
     return ""
 
 
+
 def detect_runtime_environment(
     environ: dict[str, str] | None = None,
 ) -> RuntimeEnvironment:
+    # 检测当前进程是在主机、Docker 还是 Kubernetes 上运行
     """Detect whether the current process is running on host, Docker, or Kubernetes."""
 
     environ = environ or os.environ
@@ -70,6 +73,7 @@ def detect_runtime_environment(
 
 
 def load_runtime_target_from_env_file(env_path: str | Path = ".env") -> str | None:
+    # 从 `.env` 文件中加载 LIGHTRAG_RUNTIME_TARGET 的原始值（如果存在）
     """Return the raw LIGHTRAG_RUNTIME_TARGET value from the `.env` file, if present."""
 
     env_values = dotenv_values(str(env_path))
@@ -79,10 +83,12 @@ def load_runtime_target_from_env_file(env_path: str | Path = ".env") -> str | No
     return runtime_target.strip()
 
 
+# 验证运行时目标
 def validate_runtime_target(
     runtime_target: str | None,
     runtime_environment: RuntimeEnvironment | None = None,
 ) -> tuple[bool, str | None]:
+    # 验证 .env 中的运行时目标是否与当前运行时环境(匹配)  against, 相反， 不一致
     """Validate `.env` runtime target against the current runtime environment."""
 
     if runtime_target is None:
