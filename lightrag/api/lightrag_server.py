@@ -46,21 +46,23 @@ from lightrag.constants import (
     DEFAULT_LOG_MAX_BYTES,
     DEFAULT_LOG_BACKUP_COUNT,
     DEFAULT_LOG_FILENAME,
+    DEFAULT_LLM_TIMEOUT,
+    DEFAULT_EMBEDDING_TIMEOUT,
 )
 from lightrag.api.routers.document_routes import (
     DocumentManager,
     create_document_routes,
 )
-<<<<<<< HEAD
+
 from lightrag.api.routers.folder_routes import create_folder_routes
 from lightrag.kg.folder_storage import FolderManager
-=======
+
 from lightrag.parser.routing import (
     parser_rules_from_env,
     validate_parser_routing_config,
 )
 from lightrag.parser.external.mineru.cache import MinerUParserOptions
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 from lightrag.api.routers.query_routes import create_query_routes
 from lightrag.api.routers.graph_routes import create_graph_routes
 from lightrag.api.routers.ollama_api import OllamaAPI
@@ -1589,14 +1591,12 @@ def create_app(args):
 
         # Step 3: Create optimized embedding function (calls underlying function directly)
         # Note: When model is None, each binding will use its own default model
-<<<<<<< HEAD
-        async def optimized_embedding_function(texts, embedding_dim=None):
-            # 优化 embedding function，直接调用底层函数，避免重复包装。根据绑定类型传递正确的参数。
-=======
+
         async def optimized_embedding_function(
             texts, embedding_dim=None, context="document"
         ):
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+            # 优化 embedding function，直接调用底层函数，避免重复包装。根据绑定类型传递正确的参数。
+
             try:
                 if binding == "lollms":
                     from lightrag.llm.lollms import lollms_embed
@@ -1813,16 +1813,16 @@ def create_app(args):
 
         return embedding_func_instance
 
-<<<<<<< HEAD
+
     # 获取 llm 配置的超时设置，优先级为环境变量 > 默认值
     llm_timeout = get_env_value("LLM_TIMEOUT", DEFAULT_LLM_TIMEOUT, int)
     embedding_timeout = get_env_value(
         "EMBEDDING_TIMEOUT", DEFAULT_EMBEDDING_TIMEOUT, int
     )
-=======
+
     llm_timeout = args.llm_timeout
     embedding_timeout = args.embedding_timeout
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 
     async def bedrock_model_complete(
         prompt,
@@ -1960,7 +1960,7 @@ def create_app(args):
                     args.rerank_binding_host = default_base_url
 
         async def server_rerank_func(
-            query: str, documents: list, top_n: int = None, extra_body: dict = None
+            query: str, documents: list, top_n: int | None = None, extra_body: dict | None = None
         ):
             """Server rerank function with configuration from environment variables"""
             # Prepare kwargs for rerank function
@@ -2080,7 +2080,7 @@ def create_app(args):
         logger.error(f"Failed to initialize LightRAG: {e}")
         raise
 
-<<<<<<< HEAD
+
     # Create folder KV storage and FolderManager
     folder_kv = rag.key_string_value_json_storage_cls(  # type: ignore[call-arg]
         namespace="doc_folders",
@@ -2098,7 +2098,7 @@ def create_app(args):
         )
     )
     app.include_router(create_folder_routes(rag, folder_manager, api_key))
-=======
+
     _log_role_provider_options(rag)
 
     rag.register_role_llm_builder(
@@ -2111,10 +2111,8 @@ def create_app(args):
     # Add routes
     # root_path is set on the app for reverse proxy support;
     # routes stay at their natural paths and are prefixed by the proxy or uvicorn --root-path
-    app.include_router(create_document_routes(rag, doc_manager, api_key))
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
     app.include_router(create_query_routes(rag, api_key, args.top_k))
-    app.include_router(create_graph_routes(rag, api_key))
+    app.include_router(create_graph_routes(rag, api_key, folder_manager=folder_manager))
 
     # Add Ollama API routes
     ollama_api = OllamaAPI(rag, top_k=args.top_k, api_key=api_key)

@@ -221,7 +221,7 @@ def get_base_url(endpoint: str = "chat") -> str:
 def create_chat_request_data(
     content: str,
     stream: bool = False,
-    model: str = None,
+    model: str | None = None,
     conversation_history: List[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Create chat request data
@@ -245,9 +245,9 @@ def create_chat_request_data(
 
 def create_generate_request_data(
     prompt: str,
-    system: str = None,
+    system: str | None = None,
     stream: bool = False,
-    model: str = None,
+    model: str | None = None,
     options: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """Create generate request data

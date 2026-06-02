@@ -37,6 +37,7 @@
     "cancel": "Cancel",
     "save": "Save",
     "saving": "Saving...",
+    "deleting": "Deleting...",
     "saveFailed": "Save failed"
   },
   "documentPanel": {
@@ -87,6 +88,12 @@
       "tooltip": "Upload documents",
       "title": "Upload Documents",
       "description": "Drag and drop your documents here or click to browse.",
+      "folder": {
+        "label": "Target Folder",
+        "placeholder": "Choose a folder",
+        "none": "No folder",
+        "description": "Uploaded documents will inherit this folder assignment."
+      },
       "single": {
         "uploading": "Uploading {{name}}: {{percent}}%",
         "success": "Upload Success:\n{{name}} uploaded successfully",
@@ -164,6 +171,26 @@
       "hideButton": "Hide",
       "showFileNameTooltip": "Show file name",
       "hideFileNameTooltip": "Hide file name",
+      "folders": {
+        "filterLabel": "Folder Scope",
+        "filterPlaceholder": "Select a folder",
+        "allDocuments": "All documents",
+        "includeSubfolders": "Include subfolders",
+        "createButton": "New Folder",
+        "createTitle": "Create Folder",
+        "createDescription": "Create a new folder under the current folder selection.",
+        "createSubmit": "Create",
+        "parentLabel": "Parent Folder",
+        "parentRoot": "Root",
+        "nameLabel": "Folder Name",
+        "namePlaceholder": "Enter folder name",
+        "descriptionLabel": "Description",
+        "descriptionPlaceholder": "Optional folder description",
+        "refreshTooltip": "Refresh folder tree",
+        "loadFailed": "Failed to load folders\n{{error}}",
+        "createSuccess": "Folder \"{{name}}\" created",
+        "createFailed": "Failed to create folder\n{{error}}"
+      },
       "details": {
         "title": "Status Details",
         "openTooltip": "View status details",
@@ -172,6 +199,47 @@
         "copyTooltip": "Copy status details",
         "copySuccess": "Status details copied",
         "copyFailed": "Failed to copy status details"
+      }
+    },
+    "folderExplorer": {
+      "title": "Folders",
+      "allDocuments": "All Documents",
+      "loading": "Loading folders...",
+      "empty": "No folders yet",
+      "namePlaceholder": "Folder name",
+      "newRootFolder": "New Folder",
+      "refresh": "Refresh",
+      "hidePanel": "Hide folders panel",
+      "showPanel": "Show folders panel",
+      "addSubfolder": "Add subfolder",
+      "rename": "Rename",
+      "delete": "Delete",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "includeSubfolders": "Include subfolders",
+      "createSuccess": "Folder \"{{name}}\" created",
+      "createFailed": "Failed to create folder\n{{error}}",
+      "renameSuccess": "Renamed to \"{{name}}\"",
+      "renameFailed": "Failed to rename folder\n{{error}}",
+      "deleteSuccess": "Folder \"{{name}}\" deleted",
+      "deleteFailed": "Failed to delete folder\n{{error}}",
+      "moveSuccess": "Folder moved",
+      "moveFailed": "Failed to move folder\n{{error}}",
+      "moveIntoDescendantError": "Cannot move a folder into its own subfolder",
+      "deleteDialog": {
+        "title": "Delete Folder",
+        "description": "Delete folder \"{{name}}\"? Documents will not be deleted.",
+        "descriptionWithChildren": "Folder \"{{name}}\" has subfolders. Choose how to delete:",
+        "deleteFolderOnly": "Delete folder only",
+        "deleteRecursive": "Delete all (recursive)",
+        "confirm": "Delete"
+      },
+      "tooltip": {
+        "subfolders": "Subfolders",
+        "total": "total",
+        "directFiles": "Documents (direct)",
+        "totalFiles": "Documents (total)",
+        "loading": "Loading stats..."
       }
     },
     "pipelineStatus": {
@@ -389,6 +457,13 @@
       "refreshGlobalTooltip": "Refresh global graph data and reset search history",
       "refreshCurrentLabelTooltip": "Refresh current page graph data",
       "refreshingTooltip": "Refreshing data..."
+    },
+    "folderFilter": {
+      "selectTooltip": "Filter graph by folder",
+      "activeTooltip": "Filtering by folder: {{folder}}",
+      "clearFolderFilter": "Clear folder filter",
+      "loading": "Loading folders...",
+      "noFolders": "No folders available"
     },
     "emptyGraph": "Empty(Try Reload Again)"
   },

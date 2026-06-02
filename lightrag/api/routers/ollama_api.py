@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional, Type
+from typing import List, Dict, Any, Optional, Type, TypeVar
 from lightrag.utils import logger
 import time
 import json
@@ -12,6 +12,8 @@ from lightrag import LightRAG, QueryParam
 from lightrag.utils import TiktokenTokenizer
 from lightrag.api.utils_api import get_combined_auth_dependency
 from fastapi import Depends
+
+T = TypeVar("T", bound=BaseModel)
 
 
 # query mode according to query prefix (bypass is not LightRAG quer mode)
@@ -82,11 +84,11 @@ class OllamaModelDetails(BaseModel):
 
 
 class OllamaModel(BaseModel):
-    name: str
-    model: str
-    size: int
-    digest: str
-    modified_at: str
+    name: str | None
+    model: str | None
+    size: int | None
+    digest: str | None
+    modified_at: str | None
     details: OllamaModelDetails
 
 
@@ -118,8 +120,8 @@ class OllamaPsResponse(BaseModel):
 
 
 async def parse_request_body(
-    request: Request, model_class: Type[BaseModel]
-) -> BaseModel:
+    request: Request, model_class: Type[T]
+) -> T:
     """
     Parse request body based on Content-Type header.
     Supports both application/json and application/octet-stream.
@@ -238,9 +240,8 @@ class OllamaAPI:
         @self.router.get("/tags", dependencies=[Depends(combined_auth)])
         async def get_tags():
             """Return available models acting as an Ollama server"""
-            return OllamaTagResponse(
-                models=[
-                    {
+            _obj = OllamaModel(
+                    **{
                         "name": self.ollama_server_infos.LIGHTRAG_MODEL,
                         "model": self.ollama_server_infos.LIGHTRAG_MODEL,
                         "modified_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
@@ -255,7 +256,9 @@ class OllamaAPI:
                             "quantization_level": "Q4_0",
                         },
                     }
-                ]
+            )
+            return OllamaTagResponse(
+                models=[_obj]
             )
 
         @self.router.get("/ps", dependencies=[Depends(combined_auth)])
@@ -263,7 +266,7 @@ class OllamaAPI:
             """List Running Models - returns currently running models"""
             return OllamaPsResponse(
                 models=[
-                    {
+                    OllamaRunningModel(**{
                         "name": self.ollama_server_infos.LIGHTRAG_MODEL,
                         "model": self.ollama_server_infos.LIGHTRAG_MODEL,
                         "size": self.ollama_server_infos.LIGHTRAG_SIZE,
@@ -278,7 +281,7 @@ class OllamaAPI:
                         },
                         "expires_at": "2050-12-31T14:38:31.83753-07:00",
                         "size_vram": self.ollama_server_infos.LIGHTRAG_SIZE,
-                    }
+                    })
                 ]
             )
 

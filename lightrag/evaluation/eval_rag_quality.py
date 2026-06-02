@@ -115,7 +115,7 @@ def _is_nan(value: Any) -> bool:
 class RAGEvaluator:
     """Evaluate RAG system quality using RAGAS metrics"""
 
-    def __init__(self, test_dataset_path: str = None, rag_api_url: str = None):
+    def __init__(self, test_dataset_path: str | None = None, rag_api_url: str | None = None):
         """
         Initialize evaluator with test dataset
 

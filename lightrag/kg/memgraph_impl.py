@@ -1011,7 +1011,7 @@ class MemgraphStorage(BaseGraphStorage):
         self,
         node_label: str,
         max_depth: int = 3,
-        max_nodes: int = None,
+        max_nodes: int | None = None,
     ) -> KnowledgeGraph:
         """
         Retrieve a connected subgraph of nodes where the label includes the specified `node_label`.

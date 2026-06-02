@@ -220,7 +220,7 @@ async def zhipu_complete(
 async def zhipu_embedding(
     texts: list[str],
     model: str = "embedding-3",
-    api_key: str = None,
+    api_key: str | None = None,
     embedding_dim: int | None = None,
     **kwargs,
 ) -> np.ndarray:

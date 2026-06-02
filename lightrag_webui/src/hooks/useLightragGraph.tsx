@@ -5,7 +5,7 @@ import { errorMessage } from '@/lib/utils'
 import * as Constants from '@/lib/constants'
 import { useGraphStore, RawGraph, RawNodeType, RawEdgeType } from '@/stores/graph'
 import { toast } from 'sonner'
-import { queryGraphs } from '@/api/lightrag'
+import { queryGraphs, queryGraphsByFolder } from '@/api/lightrag'
 import { useBackendState } from '@/stores/state'
 import { useSettingsStore } from '@/stores/settings'
 
@@ -182,6 +182,78 @@ const fetchGraph = async (label: string, maxDepth: number, maxNodes: number) => 
   return { rawGraph, is_truncated: rawData.is_truncated }
 }
 
+const fetchGraphByFolder = async (folderId: string, maxNodes: number) => {
+  let rawData: any;
+
+  useGraphStore.getState().setLabelsFetchAttempted(true)
+
+  try {
+    console.log(`Fetching graph by folder: ${folderId}, nodes: ${maxNodes}`);
+    rawData = await queryGraphsByFolder(folderId, maxNodes, true);
+  } catch (e) {
+    useBackendState.getState().setErrorMessage(errorMessage(e), 'Query Graphs By Folder Error!');
+    return null;
+  }
+
+  let rawGraph = null;
+
+  if (rawData) {
+    const nodeIdMap: Record<string, number> = {}
+    const edgeIdMap: Record<string, number> = {}
+
+    for (let i = 0; i < rawData.nodes.length; i++) {
+      const node = rawData.nodes[i]
+      nodeIdMap[node.id] = i
+      node.x = Math.random()
+      node.y = Math.random()
+      node.degree = 0
+      node.size = 10
+    }
+
+    for (let i = 0; i < rawData.edges.length; i++) {
+      const edge = rawData.edges[i]
+      edgeIdMap[edge.id] = i
+      const source = nodeIdMap[edge.source]
+      const target = nodeIdMap[edge.target]
+      if (source !== undefined && target !== undefined) {
+        const sourceNode = rawData.nodes[source]
+        const targetNode = rawData.nodes[target]
+        if (sourceNode) sourceNode.degree += 1
+        if (targetNode) targetNode.degree += 1
+      }
+    }
+
+    let minDegree = Number.MAX_SAFE_INTEGER
+    let maxDegree = 0
+    for (const node of rawData.nodes) {
+      minDegree = Math.min(minDegree, node.degree)
+      maxDegree = Math.max(maxDegree, node.degree)
+    }
+    const range = maxDegree - minDegree
+    if (range > 0) {
+      const scale = Constants.maxNodeSize - Constants.minNodeSize
+      for (const node of rawData.nodes) {
+        node.size = Math.round(
+          Constants.minNodeSize + scale * Math.pow((node.degree - minDegree) / range, 0.5)
+        )
+      }
+    }
+
+    rawGraph = new RawGraph()
+    rawGraph.nodes = rawData.nodes
+    rawGraph.edges = rawData.edges
+    rawGraph.nodeIdMap = nodeIdMap
+    rawGraph.edgeIdMap = edgeIdMap
+
+    if (!validateGraph(rawGraph)) {
+      rawGraph = null
+      console.warn('Invalid graph data')
+    }
+  }
+
+  return { rawGraph, is_truncated: rawData?.is_truncated }
+}
+
 // Create a new graph instance with the raw graph data
 const createSigmaGraph = (rawGraph: RawGraph | null) => {
   // Get edge size settings from store
@@ -261,6 +333,7 @@ const createSigmaGraph = (rawGraph: RawGraph | null) => {
 const useLightrangeGraph = () => {
   const { t } = useTranslation()
   const queryLabel = useSettingsStore.use.queryLabel()
+  const graphFolderId = useSettingsStore.use.graphFolderId()
   const rawGraph = useGraphStore.use.rawGraph()
   const sigmaGraph = useGraphStore.use.sigmaGraph()
   const maxQueryDepth = useSettingsStore.use.graphQueryMaxDepth()
@@ -296,7 +369,7 @@ const useLightrangeGraph = () => {
 
   // Reset graph when query label is cleared
   useEffect(() => {
-    if (!queryLabel && (rawGraph !== null || sigmaGraph !== null)) {
+    if (!queryLabel && !graphFolderId && (rawGraph !== null || sigmaGraph !== null)) {
       const state = useGraphStore.getState()
       state.reset()
       state.setGraphDataFetchAttempted(false)
@@ -304,7 +377,18 @@ const useLightrangeGraph = () => {
       dataLoadedRef.current = false
       initialLoadRef.current = false
     }
-  }, [queryLabel, rawGraph, sigmaGraph])
+  }, [queryLabel, graphFolderId, rawGraph, sigmaGraph])
+
+  // Reset fetch state when graphFolderId changes to trigger a new fetch
+  useEffect(() => {
+    const state = useGraphStore.getState()
+    state.setGraphDataFetchAttempted(false)
+    state.setLabelsFetchAttempted(false)
+    fetchInProgressRef.current = false
+    dataLoadedRef.current = false
+    initialLoadRef.current = false
+    emptyDataHandledRef.current = false
+  }, [graphFolderId])
 
   // Graph data fetching logic
   useEffect(() => {
@@ -313,8 +397,8 @@ const useLightrangeGraph = () => {
       return
     }
 
-    // Empty queryLabel should be only handle once(avoid infinite loop)
-    if (!queryLabel && emptyDataHandledRef.current) {
+    // Empty queryLabel and no folder should be only handle once(avoid infinite loop)
+    if (!queryLabel && !graphFolderId && emptyDataHandledRef.current) {
       return;
     }
 
@@ -340,17 +424,21 @@ const useLightrangeGraph = () => {
 
       // Use a local copy of the parameters
       const currentQueryLabel = queryLabel
+      const currentGraphFolderId = graphFolderId
       const currentMaxQueryDepth = maxQueryDepth
       const currentMaxNodes = maxNodes
 
       // Declare a variable to store data promise
       let dataPromise: Promise<{ rawGraph: RawGraph | null; is_truncated: boolean | undefined } | null>;
 
-      // 1. If query label is not empty, use fetchGraph
-      if (currentQueryLabel) {
+      // 1. If folder id is set, fetch graph by folder
+      if (currentGraphFolderId) {
+        dataPromise = fetchGraphByFolder(currentGraphFolderId, currentMaxNodes);
+      } else if (currentQueryLabel) {
+        // 2. If query label is not empty, use fetchGraph
         dataPromise = fetchGraph(currentQueryLabel, currentMaxQueryDepth, currentMaxNodes);
       } else {
-        // 2. If query label is empty, set data to null
+        // 3. If query label is empty and no folder, set data to null
         console.log('Query label is empty, show empty graph')
         dataPromise = Promise.resolve({ rawGraph: null, is_truncated: false });
       }
@@ -455,7 +543,7 @@ const useLightrangeGraph = () => {
         state.setLastSuccessfulQueryLabel('') // Clear last successful query label on error
       })
     }
-  }, [queryLabel, maxQueryDepth, maxNodes, isFetching, t, graphDataVersion])
+  }, [queryLabel, graphFolderId, maxQueryDepth, maxNodes, isFetching, t, graphDataVersion])
 
   // Handle node expansion
   useEffect(() => {

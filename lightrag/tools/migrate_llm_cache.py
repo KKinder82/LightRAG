@@ -901,7 +901,7 @@ class MigrationTool:
             yield batch
 
     async def stream_default_caches(
-        self, storage, storage_name: str, batch_size: int = None
+        self, storage, storage_name: str, batch_size: int | None = None
     ):
         """Stream default caches from any storage type - unified interface
 
@@ -999,7 +999,7 @@ class MigrationTool:
         self,
         storage_type: str,
         use_streaming: bool = False,
-        exclude_storage_name: str = None,
+        exclude_storage_name: str | None = None,
     ) -> tuple:
         """Setup and initialize storage with config.ini fallback support
 

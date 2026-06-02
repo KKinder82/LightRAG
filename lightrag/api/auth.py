@@ -84,8 +84,8 @@ class AuthHandler:
         self,
         username: str,
         role: str = "user",
-        custom_expire_hours: int = None,
-        metadata: dict = None,
+        custom_expire_hours: int | None = None,
+        metadata: dict | None = None,
     ) -> str:
         """
         Create JWT token

@@ -161,6 +161,7 @@ document_canonical_key = normalize_document_file_path
 
 
 def has_known_document_source(source_key: str) -> bool:
+    # 是不是一个已知的文档来源，排除占位符来源（如 "unknown_source"）
     return source_key not in PLACEHOLDER_DOCUMENT_SOURCES
 
 
@@ -223,6 +224,7 @@ def doc_status_field(doc: Any, field: str, default: Any = "") -> Any:
 _DOC_STATUS_METADATA_CARRY_OVER_KEYS: tuple[str, ...] = (
     "process_options",
     "source_file_name",
+    "folder_id",
     "parse_warnings",
     "chunk_opts",
     "parsing_start_time",
@@ -290,6 +292,7 @@ _ASSET_PATH_PATTERN = re.compile(r'(?<=path=")[^"]*\.blocks\.assets/')
 
 
 def normalize_merged_text_for_hash(content: str) -> str:
+    # 标准化合并文本以进行哈希计算，剥离侧车 ID 和资产路径中的文件名派生前缀。
     """Strip filename-derived prefixes from sidecar ids and asset paths.
 
     Idempotent and safe on plain text (matches the doc_hash literal only —
@@ -299,6 +302,7 @@ def normalize_merged_text_for_hash(content: str) -> str:
     """
     if not content:
         return content
+    #\1 \2 是正则表达式中的反向引用，分别指代第一个和第二个捕获组的内容。
     content = _SIDECAR_ID_PATTERN.sub(r"\1-<DOC>-\2", content)
     content = _ASSET_PATH_PATTERN.sub("<ASSETS>/", content)
     return content
@@ -355,6 +359,8 @@ def configured_input_dir() -> Path:
 async def get_existing_doc_by_file_basename(
     doc_status: DocStatusStorage, file_path: Any
 ) -> tuple[str, Any] | None:
+    # 获取基于文件路径的文档状态记录，（文件状态，）
+    # 输入路径会被规范化为基线名称，以支持不同变体的路径映射到同一文档记录。
     """Find an existing doc_status record by canonical file basename.
 
     Inputs are normalized via :func:`normalize_document_file_path` so callers
@@ -412,8 +418,11 @@ def make_lightrag_doc_content(merged_text: str) -> str:
     """
     return f"{LIGHTRAG_DOC_CONTENT_PREFIX}{merged_text or ''}"
 
-
 def strip_lightrag_doc_prefix(content: str | None, parse_format: str | None) -> str:
+    # 剥开 LightRAG Document 内容的前缀 "{{LRdoc}}"，
+    # 仅当 parse_format 指示记录为 lightrag 格式时才剥离该标记。
+    # 任何其他 parse_format（raw、pending_parse、None 等）都将返回原始内容不变，
+    # 因此即使一个原始文档的字面正文恰好以 "{{LRdoc}}" 开头，也不会被默默截断。
     """Return the bare body for a stored ``full_docs.content`` value.
 
     The ``{{LRdoc}}`` marker is stripped **only** when ``parse_format``
@@ -428,12 +437,12 @@ def strip_lightrag_doc_prefix(content: str | None, parse_format: str | None) -> 
     automatically.
     """
     if (
-        parse_format == FULL_DOCS_FORMAT_LIGHTRAG
-        and isinstance(content, str)
-        and content.startswith(LIGHTRAG_DOC_CONTENT_PREFIX)
+        parse_format == FULL_DOCS_FORMAT_LIGHTRAG  # 仅当 parse_format 明确指示为 lightrag 格式时才剥离前缀
+        and isinstance(content, str) # 确保 content 是字符串类型，避免非字符串类型导致的错误
+        and content.startswith(LIGHTRAG_DOC_CONTENT_PREFIX) # 以{{LRdoc}}打头
     ):
-        return content[len(LIGHTRAG_DOC_CONTENT_PREFIX) :]
-    return content or ""
+        return content[len(LIGHTRAG_DOC_CONTENT_PREFIX) :] # 剥离前缀后返回正文内容
+    return content or "" # 其他情况返回原始内容（如果 content 是 None 则返回空字符串）
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +507,7 @@ def parsed_artifact_dir_for(
 
 
 def sidecar_uri_for(parsed_artifact_dir: Path | str) -> str:
+    # 把 path 调整为 url 
     """Build the canonical sidecar URI for a local artifact directory.
 
     The result always ends with ``/`` so a reader can distinguish a directory
@@ -509,6 +519,7 @@ def sidecar_uri_for(parsed_artifact_dir: Path | str) -> str:
 
 
 def resolve_sidecar_uri(uri: str | None) -> Path | None:
+    # 把 sidecar URI 地址，解析为本地文件系统路径 Path 对象。
     """Decode a sidecar URI into a local filesystem Path.
 
     Returns None for the unknown sentinel, empty input, or any non-``file://``
@@ -526,6 +537,8 @@ def resolve_sidecar_uri(uri: str | None) -> Path | None:
 
 
 def sidecar_blocks_path(uri: str | None) -> str | None:
+    # 从侧车 URI 定位第一个 ``*.blocks.jsonl`` 文件。
+    # 返回绝对路径字符串，或当 URI 无法在本地解析或目录中没有 blocks 文件时返回 None。
     """Locate the first ``*.blocks.jsonl`` file inside a sidecar URI.
 
     Returns the absolute path as a string, or None when the URI cannot be
@@ -533,8 +546,12 @@ def sidecar_blocks_path(uri: str | None) -> str | None:
     """
     d = resolve_sidecar_uri(uri)
     if d is None or not d.is_dir():
+        # 如果 d 不是一个有效的目录（包括 URI 无法解析或解析后路径不是目录的情况），则返回 None
         return None
     candidates = sorted(d.glob("*.blocks.jsonl"))
+    # 如果目录中没有任何以 .blocks.jsonl 结尾的文件，
+    # 则 candidates 为空列表，函数返回 None；
+    # 否则返回第一个匹配文件的绝对路径字符串。
     return str(candidates[0]) if candidates else None
 
 

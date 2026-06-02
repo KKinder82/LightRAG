@@ -77,8 +77,8 @@ async def jina_embed(
     model: str = "jina-embeddings-v4",
     embedding_dim: int = 2048,
     late_chunking: bool = False,
-    base_url: str = None,
-    api_key: str = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     context: str | None = None,
     task: str | None = None,
 ) -> np.ndarray:

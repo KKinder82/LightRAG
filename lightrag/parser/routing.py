@@ -60,6 +60,8 @@ class FilenameParserHintError(ValueError):
 
 
 def normalize_parser_engine(engine: Any) -> str:
+    # 标准化 parser_engine，去掉后缀，转小写 aaa-bbb => aaa
+    # -> legacy, native, mineru, docling
     """Normalize engine hints such as mineru-iet to mineru."""
     return str(engine or "").strip().split("-", 1)[0].lower()
 
@@ -118,6 +120,7 @@ def sanitize_process_options(options: Any) -> str:
 def validate_process_options(
     options: str, *, label: str = "process options"
 ) -> list[str]:
+    # 验证选项字符串是否合法，返回错误信息列表，空表示合法
     """Return a list of error messages for an options string; empty if valid."""
     errors: list[str] = []
     if not options:
@@ -470,25 +473,33 @@ def split_engine_and_options(bracket_inner: str) -> tuple[str | None, str]:
 
 
 def parser_suffix(file_path: str | Path) -> str:
+    # 读取文件后缀，不带点，转小写
     return Path(file_path).suffix.lower().lstrip(".")
 
 
 def parser_engine_supports_suffix(engine: str, suffix: str) -> bool:
+    # 分析引擎是否支持文件类型
+    # suffix: 文件后缀，不带点，转小写
     return suffix.lower().lstrip(".") in PARSER_ENGINE_SUFFIX_CAPABILITIES.get(
         engine, frozenset()
     )
 
 
 def parser_engine_endpoint_configured(engine: str) -> bool:
+    # 分析 引擎是否配置了外部服务端点（如果需要的话）
     if engine == PARSER_ENGINE_MINERU:
         mode = os.getenv("MINERU_API_MODE", "local").strip().lower()
         if mode == "official":
+            # 官方模式需要 API token，且不接受空字符串
             return bool(os.getenv("MINERU_API_TOKEN", "").strip())
         if mode == "local":
+            # 本地模式需要本地端点，且不接受空字符串
             return bool(os.getenv("MINERU_LOCAL_ENDPOINT", "").strip())
         return False
+    # 分析引擎接入点。（只支持 Docling，且默认已配置）
     endpoint_env = _PARSER_ENGINE_ENDPOINT_ENV.get(engine)
     if endpoint_env:
+        # 需要特定环境变量来配置端点，且该环境变量必须非空
         return bool(os.getenv(endpoint_env, "").strip())
     return True
 
@@ -514,6 +525,7 @@ def _engine_is_usable(
     if engine not in SUPPORTED_PARSER_ENGINES:
         return False
     if not parser_engine_supports_suffix(engine, suffix):
+        # 不支持的文件类型
         return False
     if require_external_endpoint and not parser_engine_endpoint_configured(engine):
         return False
@@ -566,13 +578,15 @@ def _validate_filename_hint_for_resolution(
     *,
     require_external_endpoint: bool,
 ) -> None:
+    # 验证文件名中的提示是否合法，抛出异常
     """Fail fast for malformed filename hints on ingestion entrypoints."""
     basename = Path(file_path).name
     m = _PARSER_HINT_RE.search(basename)
     if not m:
+        # 文件名不是 .[engine].ext 这种格式 
         return
 
-    inner = m.group(1)
+    inner = m.group(1)  # engine
     errors: list[str] = []
 
     if not inner.strip():
@@ -596,7 +610,7 @@ def _validate_filename_hint_for_resolution(
                 )
             )
     elif "-" in inner:
-        engine_name, _, options = inner.partition("-")
+        engine_name, _, options = inner.partition("-") # aaaa-bbb-ccc => aaaa,-,bbb-ccc
         engine = normalize_parser_engine(engine_name)
         if engine not in SUPPORTED_PARSER_ENGINES:
             supported = ", ".join(sorted(SUPPORTED_PARSER_ENGINES))
@@ -605,6 +619,7 @@ def _validate_filename_hint_for_resolution(
                 f"{engine_name.strip()!r}; supported engines: {supported}"
             )
         elif not options.strip():
+            # 没有选项但有连字符，说明格式错误（应该是 engine-options 而不是 engine-）
             errors.append(f"filename hint {m.group(0)!r} has empty process options")
         else:
             errors.extend(
@@ -827,6 +842,7 @@ def resolve_file_parser_engine(
     parser_rules: str | None = None,
     require_external_endpoint: bool = True,
 ) -> str:
+    # 获取 文件分析引擎。legacy / native / mineru / docling
     """Resolve the extraction engine for a source file before content extraction."""
     engine, _ = resolve_file_parser_directives(
         file_path,
@@ -840,8 +856,9 @@ def resolve_file_parser_directives(
     file_path: str | Path,
     *,
     parser_rules: str | None = None,
-    require_external_endpoint: bool = True,
+    require_external_endpoint: bool = True, # 需要外部接入点
 ) -> tuple[str, str]:
+    # 解析，文件分析指令
     """Resolve ``(engine, process_options)`` for a source file before extraction.
 
     Resolution order (mirrors :func:`resolve_file_parser_engine`):

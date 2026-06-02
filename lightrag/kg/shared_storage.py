@@ -97,6 +97,7 @@ _debug_n_locks_acquired: int = 0
 
 
 def get_final_namespace(namespace: str, workspace: str | None = None):
+    # 根据 workspace 和 namespace 生成最终的命名空间字符串，优先使用传入的 workspace，如果没有则使用全局默认 workspace。
     global _default_workspace
     if workspace is None:
         workspace = _default_workspace
@@ -463,7 +464,7 @@ def _get_or_create_shared_raw_mp_lock(
                     f"Shared-Data lock registry for {factory_name} is corrupted for key {key}"
                 )
             if (
-                count == 0 and combined_key in _lock_cleanup_data
+                count == 0 and combined_key in _lock_cleanup_data 
             ):  # Reusing an key waiting for cleanup, remove it from cleanup list
                 _lock_cleanup_data.pop(combined_key)
         count += 1
@@ -1074,7 +1075,7 @@ def get_internal_lock(enable_logging: bool = False) -> UnifiedLock:
         raise RuntimeError(
             "Shared data not initialized. Call initialize_share_data() before using locks!"
         )
-    async_lock = _async_locks.get("internal_lock") if _is_multiprocess else None
+    async_lock = _async_locks.get("internal_lock") if _is_multiprocess else None # type: ignore
     return UnifiedLock(
         lock=_internal_lock,
         is_async=not _is_multiprocess,
@@ -1174,7 +1175,9 @@ def get_keyed_lock_status() -> Dict[str, Any]:
     return status
 
 
+
 def initialize_share_data(workers: int = 1):
+    # 初始化共享存储数据，支持单进程和多进程模式。
     """
     Initialize shared storage data for single or multi-process mode.
 
@@ -1380,6 +1383,7 @@ async def set_all_update_flags(namespace: str, workspace: str | None = None):
             raise ValueError(f"Namespace {final_namespace} not found in update flags")
         # Update flags for both modes
         for i in range(len(_update_flags[final_namespace])):
+            # 为什么有这么多的状态。
             _update_flags[final_namespace][i].value = True
 
 
@@ -1471,6 +1475,7 @@ async def try_initialize_namespace(
 async def get_namespace_data(
     namespace: str, first_init: bool = False, workspace: str | None = None
 ) -> Dict[str, Any]:
+    # 获取特定命名空间的共享数据引用，如果不存在则创建（如果允许）。对于 pipeline_status 命名空间，只有在 first_init=True 时才允许创建，
     """get the shared data reference for specific namespace
 
     Args:
@@ -1491,6 +1496,7 @@ async def get_namespace_data(
 
     async with get_internal_lock():
         if final_namespace not in _shared_dicts:
+            # 不存在，則创建。
             # Special handling for pipeline_status namespace
             if (
                 final_namespace.endswith(":pipeline_status")
@@ -1502,6 +1508,7 @@ async def get_namespace_data(
 
             # For other namespaces or when allow_create=True, create them dynamically
             if _is_multiprocess and _manager is not None:
+                # Use Manager.dict() for shared dictionary in multiprocess mode
                 _shared_dicts[final_namespace] = _manager.dict()
             else:
                 _shared_dicts[final_namespace] = {}

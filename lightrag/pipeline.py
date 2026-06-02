@@ -192,6 +192,7 @@ class _BatchRunContext:
 
 
 class _PipelineMixin:
+    # full_docs: 全部文件
     """Mixin providing document ingestion pipeline methods for LightRAG.
 
     Designed to be combined as a base of LightRAG only.  Relies on
@@ -218,6 +219,7 @@ class _PipelineMixin:
         chunk_options: dict | list[dict] | None = None,
         from_scan: bool = False,
     ) -> str:
+        # 串行加入文档自理队伍
         """
         Pipeline for Processing Documents
 
@@ -228,6 +230,7 @@ class _PipelineMixin:
 
         Args:
             input: Single document string or list of document strings (can be empty when docs_format is lightrag)
+            #text 或 texts
             ids: list of unique document IDs, if not provided, MD5 hash IDs will be generated (from content or file_path when lightrag)
             file_paths: list of file paths corresponding to each document, used for citation
             track_id: tracking ID for monitoring processing status
@@ -238,6 +241,7 @@ class _PipelineMixin:
                 accepted as a single string broadcast to every input or as a list
                 aligned with ``input``. Stored verbatim on ``full_docs`` and
                 mirrored to ``doc_status.metadata['process_options']``.
+            #切片选项
             chunk_options: per-document chunker parameter snapshot.
                 Accepted as ``dict`` (broadcast to every input) or
                 ``list[dict]`` (aligned with ``input``).  When ``None``,
@@ -254,6 +258,7 @@ class _PipelineMixin:
                 result here; this function is intentionally chunker-
                 config agnostic.  See
                 ``docs/FileProcessingConfiguration-zh.md`` for the schema.
+            # 任务是否来至后台 scan 任务。
             from_scan: when True, the caller is the scan-owned background task
                 that already holds ``pipeline_status["scanning"]``.  Scan
                 does additional doc_status reads during its classification
@@ -314,6 +319,7 @@ class _PipelineMixin:
                 )
 
         # Generate track_id if not provided
+        # 如果跟踪ID未提供，则生成一个新的跟踪ID
         if track_id is None or track_id.strip() == "":
             track_id = generate_track_id("enqueue")
         if isinstance(input, str):
@@ -335,6 +341,7 @@ class _PipelineMixin:
 
         # If file_paths is provided, ensure it matches the number of documents
         if file_paths is not None:
+            # 文件路径如果提供，确保它与文档数量匹配
             if isinstance(file_paths, str):
                 file_paths = [file_paths]
             if len(file_paths) != len(input):
@@ -346,19 +353,23 @@ class _PipelineMixin:
             ]
             file_paths = [path if path else "unknown_source" for path in file_paths]
         else:
+            # 文件路径没指定，是统一为 "unknown_source"
             file_paths = ["unknown_source"] * len(input)
 
         is_lightrag_format = docs_format == FULL_DOCS_FORMAT_LIGHTRAG
         if is_lightrag_format and lightrag_document_paths is not None:
+            # 检查数量
             if len(lightrag_document_paths) != len(input):
                 raise ValueError(
                     "Number of lightrag_document_paths must match the number of documents"
                 )
         if parse_engine is not None and len(parse_engine) != len(input):
+            # 检查 引擎数量
             raise ValueError(
                 "Number of parse engines must match the number of documents"
             )
         if process_options is not None and len(process_options) != len(input):
+            # 检查 处理选项
             raise ValueError(
                 "Number of process options must match the number of documents"
             )
@@ -368,12 +379,14 @@ class _PipelineMixin:
             )
 
         def _parse_engine_at(index: int) -> str | None:
+            # 根据 index 获取引擎
             if parse_engine is None:
                 return None
             engine = str(parse_engine[index] or "").strip().lower()
             return engine or None
 
         def _process_options_at(index: int) -> str:
+            # 根据 index 获取处理选项字符串
             if process_options is None:
                 return ""
             from lightrag.parser.routing import sanitize_process_options
@@ -381,27 +394,7 @@ class _PipelineMixin:
             return sanitize_process_options(process_options[index])
 
         def _chunk_options_at(index: int) -> dict[str, Any]:
-            """Resolve the per-doc slim chunk_options snapshot.
-
-            Projects the chunker config down to the one strategy
-            sub-dict selected by the doc's ``process_options`` (F by
-            default) — the persisted ``full_docs[doc_id]['chunk_options']``
-            carries only the params actually consumed at process time.
-
-            When the caller supplied ``chunk_options`` we slim it
-            against the per-doc options (deep-copying internally so two
-            docs broadcast from a single dict cannot share mutable
-            sub-dicts); otherwise we build a fresh snapshot from
-            ``self.addon_params['chunker']``.
-
-            F-strategy runtime args (``split_by_character`` /
-            ``split_by_character_only`` from :meth:`LightRAG.ainsert`)
-            are baked into the snapshot upstream — ainsert calls
-            :func:`lightrag.parser.routing.resolve_chunk_options` itself
-            and passes the result via ``chunk_options=``.  This function
-            is purely a persistence helper; chunker-config construction
-            is not its concern.
-            """
+            # 分块选项
             from lightrag.parser.routing import (
                 resolve_chunk_options,
                 slim_chunk_options,
@@ -415,8 +408,10 @@ class _PipelineMixin:
         # 1. Validate ids and build contents (when lightrag: no content dedup, content may be empty)
         if ids is not None:
             if len(ids) != len(input):
+                # ids 数量必须与文档数量匹配
                 raise ValueError("Number of IDs must match the number of documents")
             if len(ids) != len(set(ids)):
+                # ids 必须唯一
                 raise ValueError("IDs must be unique")
 
         # Canonicalize every input filename once: the stored ``file_path``
@@ -441,8 +436,9 @@ class _PipelineMixin:
             content: str,
             doc_format: str,
             *,
-            sidecar_location: str | None = None,
+            sidecar_location: str | None = None, # 使用 sidecar_location 代替 lightrag_document_paths 传递侧车信息
         ) -> None:
+            # 把内容添加到 contents 字典中，并进行重复内容检查和 doc_id 生成
             file_path_canonical = file_paths_canonical[index]
 
             # Body length excludes the {{LRdoc}} marker so duplicate-attempt
@@ -461,6 +457,7 @@ class _PipelineMixin:
                 )
 
             known_source = has_known_document_source(file_path_canonical)
+            # 获取 doc_id
             if ids is not None:
                 doc_id = ids[index]
             elif known_source:
@@ -475,6 +472,8 @@ class _PipelineMixin:
                 )
 
             if known_source and file_path_canonical in source_to_doc_id:
+                # 如果文件路径已知
+                # 且之前已经出现过相同的规范化路径，则视为重复，记录重复尝试并跳过后续处理
                 duplicate_attempts.append(
                     {
                         "doc_id": doc_id,
@@ -489,6 +488,7 @@ class _PipelineMixin:
                 return
 
             if content_hash and content_hash in content_hash_to_doc_id:
+                # 如果内容哈希已存在，则视为重复，记录重复尝试并跳过后续处理
                 duplicate_attempts.append(
                     {
                         "doc_id": doc_id,
@@ -503,8 +503,10 @@ class _PipelineMixin:
                 return
 
             if known_source:
+                # 保存规范化路径到 doc_id 的映射，以便后续遇到相同路径时能识别为重复
                 source_to_doc_id[file_path_canonical] = doc_id
             if content_hash:
+                # 保存内容哈希到 doc_id 的映射，以便后续遇到相同内容时能识别为重复
                 content_hash_to_doc_id[content_hash] = doc_id
 
             content_data: dict[str, Any] = {
@@ -532,8 +534,8 @@ class _PipelineMixin:
             content_data["chunk_options"] = _chunk_options_at(index)
             contents[doc_id] = content_data
 
-        if is_lightrag_format:
-            # LightRAG Document: no content hash dedup; content may be empty
+        if is_lightrag_format: # lightrag 格式的文档输入，
+            # 如果是Raw时，則根据 file_paths，读取Content
             for i in range(len(file_paths)):
                 path = file_paths[i]
                 raw_path = (
@@ -544,10 +546,13 @@ class _PipelineMixin:
                 # input_dir.
                 p = Path(raw_path)
                 if not p.is_absolute():
+                    # 不是绝对路径，则基于输入目录解析为绝对路径
                     p = input_dir_path() / p
                 # The user may point at the ``*.blocks.jsonl`` file itself
                 # or at its containing ``*.parsed/`` directory.  Sidecars
                 # are addressed by directory, so step up when given a file.
+                # 如果用户指向 ``*.blocks.jsonl`` 文件本身
+                #   或其包含的 ``*.parsed/`` 目录，侧车通过目录寻址，因此当给出一个文件时，向上一级目录查找。
                 sidecar_dir = (
                     p.parent
                     if p.suffix == ".jsonl" and p.name.endswith(".blocks.jsonl")
@@ -568,6 +573,7 @@ class _PipelineMixin:
                         sidecar_location
                     )
                 except Exception as exc:
+                    # 出错了，记录错误信息，继续处理下一个文档
                     error_msg = f"load_lightrag_document_content failed: {exc}"
                     logger.warning(f"[apipeline_enqueue] {error_msg} ({raw_path})")
                     file_size = 0
@@ -596,6 +602,7 @@ class _PipelineMixin:
                     sidecar_location=sidecar_location,
                 )
         elif ids is not None:
+            # 用户提供了 ID，且不是 lightrag 格式的情况。根据输入内容和提供的 ID 进行处理，进行内容清洗后添加到 contents 中。
             for i, doc in enumerate(input):
                 cleaned_content = sanitize_text_for_encoding(doc)
                 _add_content(
@@ -604,6 +611,8 @@ class _PipelineMixin:
                     FULL_DOCS_FORMAT_RAW,
                 )
         elif docs_format == FULL_DOCS_FORMAT_PENDING_PARSE:
+            # 如果 docs_format 是 pending_parse，内容可能是空的，但仍然需要调用 _add_content 来生成 doc_id 和记录文件路径等信息，且跳过内容去重
+            # 文件己，但还没有分析的情况。
             for i, doc in enumerate(input):
                 _add_content(
                     i,
@@ -617,12 +626,7 @@ class _PipelineMixin:
 
         # 2. Generate document initial status (without content)
         def _initial_doc_status(content_data: dict[str, Any]) -> dict[str, Any]:
-            # For lightrag-format full_docs the persisted content carries the
-            # ``{{LRdoc}}`` marker; strip it so summary/length match raw
-            # semantics (the marker is full_docs internal bookkeeping and
-            # must not leak into doc_status).  strip_lightrag_doc_prefix
-            # internally checks parse_format, so non-lightrag formats pass
-            # through untouched.
+            # 初始化文档状态，提取正文文本进行摘要和长度计算，并构建初始状态字典
             body_text = strip_lightrag_doc_prefix(
                 content_data.get("content", ""),
                 content_data.get("parse_format"),
@@ -651,42 +655,23 @@ class _PipelineMixin:
                 base["metadata"] = metadata
             return base
 
+        # 把文档，转换为初始状态，准备后续入库和去重处理。注意这里的状态不包含内容，只是根据内容计算了摘要和长度等信息。
         new_docs: dict[str, Any] = {
             id_: _initial_doc_status(content_data)
             for id_, content_data in contents.items()
         }
 
-        # Serialise the dedup-read-then-upsert critical section across
-        # concurrent enqueue calls within the same workspace.  Without
-        # this, two enqueues for the same content (e.g. /upload during
-        # scan's processing phase, or two uploads via /text + /upload)
-        # can both read doc_status before either upserts, both miss the
-        # content_hash dedup, and both end up writing PENDING rows for
-        # the same content — bypassing the dedup that's supposed to
-        # land one of them as ``duplicate_kind=content_hash`` FAILED.
-        #
-        # The lock is workspace-scoped and only spans steps 3-4 below
-        # (filter_keys → upserts).  It does NOT block concurrent
-        # processing (``apipeline_process_enqueue_documents`` reads
-        # doc_status independently) or scan classification
-        # (``scanning_exclusive`` already gates concurrent enqueue).
-        # Lock order: enqueue_serialize → pipeline_status_lock (the
-        # request_pending nudge inside is fine; no caller holds
-        # pipeline_status_lock first then needs enqueue_serialize).
         enqueue_serialize_lock = get_namespace_lock(
             "enqueue_serialize", workspace=self.workspace
         )
 
         async with enqueue_serialize_lock:
+            # 在 lcok下操作。
             # 3. Filter out already processed documents
             # Get docs ids
             all_new_doc_ids = set(new_docs.keys())
-            # Exclude IDs of documents that are already enqueued.  The previous
-            # ``reprocess_existing_non_processed`` flag has been removed: any
-            # same-name record (regardless of status) is treated as a duplicate
-            # here.  Recovering half-processed documents is now the job of the
-            # pipeline's resume logic, which runs in apipeline_process_enqueue_documents
-            # rather than this enqueue path.
+            # 过滤己自理的 id, 剩余的 id 进行后续处理。
+            # 注意这里的过滤是基于 doc_status 中的记录进行的，确保不会重复处理已经存在的文档。
             unique_new_doc_ids = await self.doc_status.filter_keys(all_new_doc_ids)
 
             for doc_id in list(unique_new_doc_ids):
@@ -697,8 +682,12 @@ class _PipelineMixin:
                     self.doc_status, content_data["file_path"]
                 )
                 if match:
+                    
                     existing_doc_id, existing_doc = match
+                    #文档ID，己存在的ID，己存在的文档信息
+
                     unique_new_doc_ids.discard(doc_id)
+                    # 如果发现文件名重复，则从 unique_new_doc_ids 中移除当前 doc_id，表示这个文档不再是唯一的，需要记录为重复尝试。
                     duplicate_attempts.append(
                         {
                             "doc_id": doc_id,
@@ -716,9 +705,11 @@ class _PipelineMixin:
                             "duplicate_kind": "filename",
                         }
                     )
+                    # 重复
                     continue
 
                 # 3b. Content-hash dedup: different filename but same body still dupes.
+                # 注意 content_hash 可能不存在（例如 pending_parse 或 lightrag 格式），只有在存在时才进行内容哈希的重复检查。
                 content_hash = content_data.get("content_hash")
                 if not content_hash:
                     continue
@@ -749,10 +740,15 @@ class _PipelineMixin:
             # Handle duplicate documents - create trackable records with current track_id
             ignored_ids = list(all_new_doc_ids - unique_new_doc_ids)
             for doc_id in ignored_ids:
+                # 处理 文件名重复但内容不同的情况：
                 if any(
                     attempt.get("doc_id") == doc_id for attempt in duplicate_attempts
                 ):
+                    # 如果这个 doc_id 已经在 duplicate_attempts 中被记录为重复了
+                    # （可能是文件名重复或者内容哈希重复），
+                    # 则跳过后续的 doc_status 查询，因为我们已经知道它是重复的了。
                     continue
+                # 处理不重复但 ID 已存在的情况（极少数，理论上不应该发生，因为我们在生成 ID 时已经考虑了内容和文件路径，但以防万一）：
                 existing_doc = await self.doc_status.get_by_id(doc_id)
                 duplicate_attempts.append(
                     {
@@ -777,6 +773,7 @@ class _PipelineMixin:
                 )
 
             if duplicate_attempts:
+                # 处理，重复情况
                 duplicate_docs: dict[str, Any] = {}
                 for index, attempt in enumerate(duplicate_attempts):
                     doc_id = attempt["doc_id"]
@@ -788,14 +785,17 @@ class _PipelineMixin:
                     )
 
                     # Create a new record with unique ID for this duplicate attempt
+                    # 创建一个新的记录，使用唯一的 ID 来标识这个重复尝试
                     dup_record_id = compute_mdhash_id(
                         f"{doc_id}-{track_id}-{index}-{file_path}", prefix="dup-"
                     )
                     if duplicate_kind == "content_hash":
+                        # 如果是内容哈希重复，说明内容相同但文件名不同，错误前缀应该强调内容重复；如果是文件名重复但内容不同，则强调文件名重复。
                         error_prefix = (
                             "Identical content already exists under another filename."
                         )
                     else:
+                        # 其他情况（默认文件名重复），错误前缀强调文件名重复。
                         error_prefix = "File name already exists."
                     duplicate_docs[dup_record_id] = {
                         "status": DocStatus.FAILED,
@@ -825,6 +825,7 @@ class _PipelineMixin:
 
                 # Store duplicate records in doc_status
                 if duplicate_docs:
+                    # 将重复记录存储在 doc_status 中，这些记录的状态为 FAILED，并包含错误信息和元数据，以便后续查询和分析。
                     await self.doc_status.upsert(duplicate_docs)
                     logger.info(
                         f"Created {len(duplicate_docs)} duplicate document records with track_id: {track_id}"
@@ -918,6 +919,7 @@ class _PipelineMixin:
         error_files: list[dict[str, Any]],
         track_id: str | None = None,
     ) -> None:
+        # 处理文件提取错误，记录错误信息到 doc_status 中，以便后续查询和分析。
         """
         Record file extraction errors in doc_status storage.
 
@@ -1009,16 +1011,18 @@ class _PipelineMixin:
         async with pipeline_status_lock:
             # Ensure only one worker is processing documents
             if not pipeline_status.get("busy", False):
+                # not busy, 可以处理
                 to_process_docs: dict[
                     str, DocProcessingStatus
                 ] = await self.doc_status.get_docs_by_statuses(
                     list(_INFLIGHT_DOC_STATUSES)
                 )
-
                 if not to_process_docs:
+                    #　没有要自理的文档.
                     logger.info("No documents to process")
                     return
 
+                #　更新状态
                 pipeline_status.update(
                     {
                         "busy": True,
@@ -1033,9 +1037,11 @@ class _PipelineMixin:
                     }
                 )
                 # Cleaning history_messages without breaking it as a shared list object
+                #　清除历史消息
                 del pipeline_status["history_messages"][:]
             else:
                 # Another process is busy, just set request flag and return
+                #　忙碌中，设置请求标志并返回,　请求被排队了
                 pipeline_status["request_pending"] = True
                 logger.info(
                     "Another process is already processing the document queue. Request queued."
@@ -1059,6 +1065,7 @@ class _PipelineMixin:
                 # Check for cancellation request at the start of main loop
                 async with pipeline_status_lock:
                     if pipeline_status.get("cancellation_requested", False):
+                        #　有取消请求，清理状态并退出
                         pipeline_status["request_pending"] = False
                         pipeline_status["cancellation_requested"] = False
 
@@ -1071,6 +1078,7 @@ class _PipelineMixin:
                         return
 
                 if not to_process_docs:
+                    #　没有待处理的文档了，记录日志并退出循环
                     log_message = "All enqueued documents have been processed"
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
@@ -1086,6 +1094,8 @@ class _PipelineMixin:
                     continue
 
                 # Validate document data consistency and fix any issues
+                #　验证文件数据一致性，修复问题。
+                # 这个函数会检查文档状态和 full_docs 之间的一致性，并尝试修复任何发现的问题，例如缺失的 full_docs 条目或不一致的状态。如果修复后没有有效的文档可处理了，就记录日志并继续循环等待新的文档。
                 to_process_docs = await self._validate_and_fix_document_consistency(
                     to_process_docs, pipeline_status, pipeline_status_lock
                 )
@@ -1138,6 +1148,7 @@ class _PipelineMixin:
                 pipeline_status["history_messages"].append(log_message)
 
                 # Check for pending documents again
+                #　获取
                 to_process_docs = await self.doc_status.get_docs_by_statuses(
                     list(_INFLIGHT_DOC_STATUSES)
                 )
@@ -1239,13 +1250,16 @@ class _PipelineMixin:
 
     async def _validate_and_fix_document_consistency(
         self,
-        to_process_docs: dict[str, DocProcessingStatus],
+        to_process_docs: dict[str, DocProcessingStatus], # 待处理的文档列表，状态来自 doc_status 存储
         pipeline_status: dict,
         pipeline_status_lock: asyncio.Lock,
     ) -> dict[str, DocProcessingStatus]:
         """Validate and fix document data consistency by deleting inconsistent entries, but preserve failed documents"""
+        #不一致的文档列表，应该删除的文档列表，成功删除的计数
         inconsistent_docs = []
+        #　失败的文档列表，应该保留的文档列表. 
         failed_docs_to_preserve = []
+        # 失败的文档列表，应该保留的文档列表.
         successful_deletions = 0
 
         # Check each document's data consistency
@@ -1258,8 +1272,13 @@ class _PipelineMixin:
                     hasattr(status_doc, "status")
                     and status_doc.status == DocStatus.FAILED
                 ):
-                    failed_docs_to_preserve.append(doc_id)
+                    # 如果从 pipeline 的 full_docs 不找到内容，
+                    # 但是 文件属性中的状态是 FAILED，
+                    # 那么我们认为这是一个处理失败的文档，我们应该保留它以供后续人工审查，而不是直接删除。
+                    failed_docs_to_preserve.append(doc_id) 
                 else:
+                    # 如果不是 FAILED 状态的文档，或者没有状态信息，我们认为这是一个不一致的文档，
+                    # 应该删除它以保持数据清洁。
                     inconsistent_docs.append(doc_id)
 
         # Log information about failed documents that will be preserved
@@ -1267,6 +1286,7 @@ class _PipelineMixin:
             async with pipeline_status_lock:
                 preserve_message = f"Preserving {len(failed_docs_to_preserve)} failed document entries for manual review"
                 logger.info(preserve_message)
+                # 记录日志，说明我们发现了一些不一致的文档条目，但它们的状态是 FAILED，所以我们决定保留它们以供后续人工审查。这有助于我们了解数据质量问题，同时避免误删可能有价值的失败记录。
                 pipeline_status["latest_message"] = preserve_message
                 pipeline_status["history_messages"].append(preserve_message)
 
@@ -1276,7 +1296,9 @@ class _PipelineMixin:
 
         # Delete inconsistent document entries(excluding failed documents)
         if inconsistent_docs:
+            
             async with pipeline_status_lock:
+                # 记录日志
                 summary_message = (
                     f"Inconsistent document entries found: {len(inconsistent_docs)}"
                 )
@@ -1326,6 +1348,10 @@ class _PipelineMixin:
         reset_count = 0
 
         for doc_id, status_doc in to_process_docs.items():
+            # 对于每个待处理的文档，我们首先检查它在 full_docs 中是否有对应的内容数据。
+            # 这是一个一致性检查，确保 doc_status 中的文档条目与 full_docs 中的内容条目匹配。
+            # 如果找不到对应的内容数据，我们之前已经将其标记为不一致并删除了 doc_status 条目，
+            #   所以这里我们只处理那些通过一致性检查的文档。
             # Check if document has corresponding content in full_docs (consistency check)
             content_data = await self.full_docs.get_by_id(doc_id)
             if content_data:  # Document passes consistency check

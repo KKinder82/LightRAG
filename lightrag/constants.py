@@ -123,11 +123,11 @@ FULL_DOCS_FORMAT_PENDING_PARSE = (
 # Per docs/FileProcessingConfiguration-zh.md, the content is "{{LRdoc}}" + a
 # leading summary of the parsed document so paginated APIs can show a real
 # preview without loading the full LightRAG Document file.
-LIGHTRAG_DOC_CONTENT_PREFIX = "{{LRdoc}}"
-PARSER_ENGINE_LEGACY = "legacy"
-PARSER_ENGINE_NATIVE = "native"
-PARSER_ENGINE_MINERU = "mineru"
-PARSER_ENGINE_DOCLING = "docling"
+LIGHTRAG_DOC_CONTENT_PREFIX = "{{LRdoc}}" # 普通字符串，没有特殊含义，后续跟随解析后的文档摘要内容
+PARSER_ENGINE_LEGACY = "legacy" # 传统的
+PARSER_ENGINE_NATIVE = "native" # 本地的
+PARSER_ENGINE_MINERU = "mineru" # MinerU 的
+PARSER_ENGINE_DOCLING = "docling" # Docling 的
 SUPPORTED_PARSER_ENGINES = frozenset(
     {
         PARSER_ENGINE_LEGACY,
@@ -259,19 +259,20 @@ PROCESS_OPTION_CHUNK_CHARS: frozenset[ProcessChunkingOption] = frozenset(
         PROCESS_OPTION_CHUNK_FIXED,
         PROCESS_OPTION_CHUNK_RECURSIVE,
         PROCESS_OPTION_CHUNK_VECTOR,
-        PROCESS_OPTION_CHUNK_PARAGRAH,
+        PROCESS_OPTION_CHUNK_PARAGRAH, 
     }
 )
+
 SUPPORTED_PROCESS_OPTIONS = frozenset(
     {
-        PROCESS_OPTION_IMAGES,
-        PROCESS_OPTION_TABLES,
-        PROCESS_OPTION_EQUATIONS,
-        PROCESS_OPTION_SKIP_KG,
-        PROCESS_OPTION_CHUNK_FIXED,
-        PROCESS_OPTION_CHUNK_RECURSIVE,
-        PROCESS_OPTION_CHUNK_VECTOR,
-        PROCESS_OPTION_CHUNK_PARAGRAH,
+        PROCESS_OPTION_IMAGES, # i
+        PROCESS_OPTION_TABLES, # t
+        PROCESS_OPTION_EQUATIONS, # e
+        PROCESS_OPTION_SKIP_KG, # !
+        PROCESS_OPTION_CHUNK_FIXED, #F
+        PROCESS_OPTION_CHUNK_RECURSIVE, #R
+        PROCESS_OPTION_CHUNK_VECTOR, #V
+        PROCESS_OPTION_CHUNK_PARAGRAH, #P
     }
 )
 

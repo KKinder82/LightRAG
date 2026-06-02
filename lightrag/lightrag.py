@@ -80,6 +80,7 @@ from lightrag.kg import (
 
 
 from lightrag.kg.shared_storage import (
+    get_data_init_lock,
     get_namespace_data,
     get_default_workspace,
     set_default_workspace,
@@ -594,6 +595,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         repr=False,
     )
     _addon_params_dirty: bool = field(default=True, init=False, repr=False)
+
     _entity_extraction_prompt_profile: dict[str, Any] = field(
         default_factory=get_default_entity_extraction_prompt_profile,
         init=False,
@@ -627,11 +629,11 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
     _storages_status: StoragesStatus = field(default=StoragesStatus.NOT_CREATED)
 
-<<<<<<< HEAD
-    def __post_init__(self):
-        # kg: 知识图谱
-        # 初始化共享数据
-=======
+
+    # def __post_init__(self):
+    #     # kg: 知识图谱
+    #     # 初始化共享数据
+
     def _mark_addon_params_dirty(self) -> None:
         self._addon_params_dirty = True
 
@@ -852,7 +854,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         }
 
     def __post_init__(self, addon_params: dict[str, Any] | None):
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
         from lightrag.kg.shared_storage import (
             initialize_share_data,
         )
@@ -1235,7 +1237,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
             self._storages_status = StoragesStatus.FINALIZED
 
-<<<<<<< HEAD
+
     async def check_and_migrate_data(self):
         """Check if data migration is needed and perform migration if necessary"""
         async with get_data_init_lock():
@@ -1537,8 +1539,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     f"Relation chunk_tracking migration completed: {total_migrated} records persisted"
                 )
 
-=======
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
+
     async def get_graph_labels(self):
         text = await self.chunk_entity_relation_graph.get_all_labels()
         return text
@@ -1547,7 +1549,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         self,
         node_label: str,
         max_depth: int = 3,
-        max_nodes: int = None,
+        max_nodes: int | None = None,
     ) -> KnowledgeGraph:
         """Get knowledge graph for a given label
 
@@ -1645,7 +1647,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             file_paths: list of file paths corresponding to each document, used for citation
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
 
-        Returns:
+        Returns:self
             str: tracking ID for monitoring processing status
         """
         # Generate track_id if not provided
@@ -1800,7 +1802,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 pipeline_status["history_messages"].append(log_message)
 
     def insert_custom_kg(
-        self, custom_kg: dict[str, Any], full_doc_id: str = None
+        self, custom_kg: dict[str, Any], full_doc_id: str | None = None
     ) -> None:
         loop = always_get_an_event_loop()
         loop.run_until_complete(self.ainsert_custom_kg(custom_kg, full_doc_id))
@@ -1808,7 +1810,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     async def ainsert_custom_kg(
         self,
         custom_kg: dict[str, Any],
-        full_doc_id: str = None,
+        full_doc_id: str | None = None,
     ) -> None:
         update_storage = False
         try:

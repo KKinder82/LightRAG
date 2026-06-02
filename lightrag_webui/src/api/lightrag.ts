@@ -211,6 +211,27 @@ export type QueryRequest = {
   enable_rerank?: boolean
 }
 
+export type FolderResponse = {
+  id: string
+  name: string
+  workspace: string
+  parent_id?: string | null
+  description: string
+  created_at: string
+  updated_at: string
+  metadata: Record<string, any>
+}
+
+export type FolderTreeNode = {
+  folder: FolderResponse
+  children: FolderTreeNode[]
+}
+
+export type FolderDeleteResponse = {
+  deleted_ids: string[]
+  message: string
+}
+
 export type QueryResponse = {
   response: string
 }
@@ -275,6 +296,8 @@ export type DocStatusResponse = {
   error_msg?: string
   metadata?: Record<string, any>
   file_path: string
+  folder_id?: string | null
+  folder_path?: string | null
 }
 
 export type DocsStatusesResponse = {
@@ -295,6 +318,8 @@ export type DocumentsRequest = {
   page_size: number
   sort_field: 'created_at' | 'updated_at' | 'id' | 'file_path'
   sort_direction: 'asc' | 'desc'
+  folder_id?: string | null
+  include_subfolders?: boolean
 }
 
 export type PaginationInfo = {
@@ -538,6 +563,20 @@ export const queryGraphs = async (
   return response.data
 }
 
+export const queryGraphsByFolder = async (
+  folderId: string,
+  maxNodes: number,
+  includeSubfolders: boolean = true
+): Promise<LightragGraphType> => {
+  const params = new URLSearchParams({
+    folder_id: folderId,
+    max_nodes: String(maxNodes),
+    include_subfolders: String(includeSubfolders),
+  })
+  const response = await axiosInstance.get(`/graphs/by-folder?${params.toString()}`)
+  return response.data
+}
+
 export const getGraphLabels = async (): Promise<string[]> => {
   const response = await axiosInstance.get('/graph/label/list')
   return response.data
@@ -584,6 +623,47 @@ export const reprocessFailedDocuments = async (): Promise<ReprocessFailedRespons
 
 export const getDocumentsScanProgress = async (): Promise<LightragDocumentsScanProgress> => {
   const response = await axiosInstance.get('/documents/scan-progress')
+  return response.data
+}
+
+export const getFolderTree = async (): Promise<FolderTreeNode[]> => {
+  const response = await axiosInstance.get('/documents/folders/tree')
+  return response.data
+}
+
+export const createFolder = async (request: {
+  name: string
+  parent_id?: string | null
+  description?: string
+  metadata?: Record<string, any>
+}): Promise<FolderResponse> => {
+  const response = await axiosInstance.post('/documents/folders', request)
+  return response.data
+}
+
+export const deleteFolder = async (
+  folderId: string,
+  recursive: boolean = false
+): Promise<FolderDeleteResponse> => {
+  const response = await axiosInstance.delete(
+    `/documents/folders/${encodeURIComponent(folderId)}?recursive=${recursive ? 'true' : 'false'}`
+  )
+  return response.data
+}
+
+export const updateFolder = async (
+  folderId: string,
+  request: {
+    name?: string
+    description?: string
+    parent_id?: string | null
+    metadata?: Record<string, any>
+  }
+): Promise<FolderResponse> => {
+  const response = await axiosInstance.put(
+    `/documents/folders/${encodeURIComponent(folderId)}`,
+    request
+  )
   return response.data
 }
 
@@ -870,10 +950,16 @@ export const insertTexts = async (texts: string[]): Promise<DocActionResponse> =
 
 export const uploadDocument = async (
   file: File,
+  options?: {
+    folderId?: string | null
+  },
   onUploadProgress?: (percentCompleted: number) => void
 ): Promise<DocActionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
+  if (options?.folderId) {
+    formData.append('folder_id', options.folderId)
+  }
 
   const response = await axiosInstance.post('/documents/upload', formData, {
     headers: {
@@ -893,11 +979,14 @@ export const uploadDocument = async (
 
 export const batchUploadDocuments = async (
   files: File[],
+  options?: {
+    folderId?: string | null
+  },
   onUploadProgress?: (fileName: string, percentCompleted: number) => void
 ): Promise<DocActionResponse[]> => {
   return await Promise.all(
     files.map(async (file) => {
-      return await uploadDocument(file, (percentCompleted) => {
+      return await uploadDocument(file, options, (percentCompleted) => {
         onUploadProgress?.(file.name, percentCompleted)
       })
     })

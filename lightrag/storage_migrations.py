@@ -12,10 +12,15 @@ Mixed into LightRAG and runs once at startup (``initialize_storages`` →
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from lightrag.base import DocStatus
 from lightrag.constants import GRAPH_FIELD_SEP
 from lightrag.kg.shared_storage import get_data_init_lock
 from lightrag.utils import logger, make_relation_chunk_key
+
+if TYPE_CHECKING:
+    from lightrag.base import BaseGraphStorage, BaseKVStorage, DocStatusStorage
 
 
 class _StorageMigrationMixin:
@@ -26,6 +31,16 @@ class _StorageMigrationMixin:
     ``full_relations``, ``chunk_entity_relation_graph``, ``entity_chunks``,
     ``relation_chunks``).
     """
+
+    # Type stubs: these attributes are initialised by LightRAG.__post_init__.
+    # Declared here so that Pylance/Pyright can resolve them inside the mixin.
+    if TYPE_CHECKING:
+        chunk_entity_relation_graph: BaseGraphStorage
+        doc_status: DocStatusStorage
+        full_entities: BaseKVStorage
+        full_relations: BaseKVStorage
+        entity_chunks: BaseKVStorage
+        relation_chunks: BaseKVStorage
 
     async def check_and_migrate_data(self):
         """Check if data migration is needed and perform migration if necessary"""

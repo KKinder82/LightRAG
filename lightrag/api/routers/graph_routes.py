@@ -7,6 +7,8 @@ import traceback
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 
+from lightrag.constants import GRAPH_FIELD_SEP
+from lightrag.types import KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge
 from lightrag.utils import logger
 from ..utils_api import get_combined_auth_dependency
 from .document_routes import check_pipeline_busy_or_raise
@@ -85,7 +87,133 @@ class RelationCreateRequest(BaseModel):
     )
 
 
-def create_graph_routes(rag, api_key: Optional[str] = None):
+async def _build_folder_knowledge_graph(
+    rag,
+    folder_ids: list[str],
+    max_nodes: int = 1000,
+) -> KnowledgeGraph:
+    """Return a KnowledgeGraph containing only entities/relations whose source
+    chunks belong to documents in the given *folder_ids*.
+
+    Algorithm:
+    1. Resolve the set of document IDs that belong to *folder_ids*.
+    2. Fetch all graph nodes; collect every unique chunk ID referenced in
+       their ``source_id`` fields.
+    3. Batch-fetch chunk records from ``text_chunks`` to build the set of
+       chunk IDs whose ``full_doc_id`` is in the folder's doc set.
+    4. Keep nodes/edges that reference at least one of those chunks.
+    5. Honour *max_nodes* by degree-priority truncation.
+    """
+    # Step 1: folder doc IDs
+    folder_doc_ids: set[str] = set(
+        await rag.doc_status.get_doc_ids_by_folder_ids(folder_ids)
+    )
+    if not folder_doc_ids:
+        return KnowledgeGraph()
+
+    # Step 2: all graph nodes
+    all_nodes: list[dict] = await rag.chunk_entity_relation_graph.get_all_nodes()
+    if not all_nodes:
+        return KnowledgeGraph()
+
+    # Collect all unique chunk IDs referenced by any node
+    all_chunk_ids: list[str] = []
+    chunk_id_set: set[str] = set()
+    for node in all_nodes:
+        raw_source = node.get("source_id", "")
+        for cid in raw_source.split(GRAPH_FIELD_SEP):
+            cid = cid.strip()
+            if cid and cid not in chunk_id_set:
+                chunk_id_set.add(cid)
+                all_chunk_ids.append(cid)
+
+    # Step 3: batch-fetch chunk records and build valid chunk set
+    valid_chunk_ids: set[str] = set()
+    if all_chunk_ids:
+        chunks_data = await rag.text_chunks.get_by_ids(all_chunk_ids)
+        for cid, chunk in zip(all_chunk_ids, chunks_data):
+            if chunk and chunk.get("full_doc_id") in folder_doc_ids:
+                valid_chunk_ids.add(cid)
+
+    if not valid_chunk_ids:
+        return KnowledgeGraph()
+
+    # Step 4: filter nodes
+    valid_node_ids: set[str] = set()
+    for node in all_nodes:
+        raw_source = node.get("source_id", "")
+        node_chunks = {c.strip() for c in raw_source.split(GRAPH_FIELD_SEP) if c.strip()}
+        if node_chunks & valid_chunk_ids:
+            valid_node_ids.add(node["id"])
+
+    # Apply max_nodes truncation (by degree approximation — keep nodes with
+    # the most edges among valid nodes; we use source_id length as a proxy)
+    if len(valid_node_ids) > max_nodes:
+        # Sort by number of referenced chunks (higher = more connected)
+        node_score = {}
+        for node in all_nodes:
+            if node["id"] in valid_node_ids:
+                raw_source = node.get("source_id", "")
+                node_score[node["id"]] = len(
+                    [c for c in raw_source.split(GRAPH_FIELD_SEP) if c.strip()]
+                )
+        valid_node_ids = set(
+            sorted(valid_node_ids, key=lambda n: node_score.get(n, 0), reverse=True)[
+                :max_nodes
+            ]
+        )
+
+    # Build result nodes
+    result = KnowledgeGraph()
+    result.is_truncated = len(valid_node_ids) < len(
+        {n["id"] for n in all_nodes
+         if {c.strip() for c in n.get("source_id", "").split(GRAPH_FIELD_SEP) if c.strip()} & valid_chunk_ids}
+    )
+    for node in all_nodes:
+        if node["id"] not in valid_node_ids:
+            continue
+        node_data = {k: v for k, v in node.items() if k != "id"}
+        labels = []
+        if "entity_type" in node_data:
+            et = node_data["entity_type"]
+            labels = et if isinstance(et, list) else [et]
+        result.nodes.append(
+            KnowledgeGraphNode(
+                id=node["id"],
+                labels=[node["id"]] if not labels else labels,
+                properties=node_data,
+            )
+        )
+
+    # Step 5: filter edges (both endpoints must be valid nodes)
+    all_edges: list[dict] = await rag.chunk_entity_relation_graph.get_all_edges()
+    seen_edges: set[str] = set()
+    for edge in all_edges:
+        src = edge.get("source", "")
+        tgt = edge.get("target", "")
+        if src not in valid_node_ids or tgt not in valid_node_ids:
+            continue
+        # Normalise undirected edge ID
+        a, b = (src, tgt) if src <= tgt else (tgt, src)
+        edge_id = f"{a}-{b}"
+        if edge_id in seen_edges:
+            continue
+        seen_edges.add(edge_id)
+        edge_props = {k: v for k, v in edge.items() if k not in ("source", "target")}
+        result.edges.append(
+            KnowledgeGraphEdge(
+                id=edge_id,
+                type="DIRECTED",
+                source=src,
+                target=tgt,
+                properties=edge_props,
+            )
+        )
+
+    return result
+
+
+def create_graph_routes(rag, api_key: Optional[str] = None, folder_manager=None):
     # Fresh router per call. A module-level instance would accumulate
     # duplicate routes when the factory is invoked more than once in the
     # same process (e.g. across tests), which triggers FastAPI's
@@ -197,6 +325,68 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
             logger.error(traceback.format_exc())
             raise HTTPException(
                 status_code=500, detail=f"Error getting knowledge graph: {str(e)}"
+            )
+
+    @router.get("/graphs/by-folder", dependencies=[Depends(combined_auth)])
+    async def get_knowledge_graph_by_folder(
+        folder_id: str = Query(..., description="Folder ID to filter the knowledge graph"),
+        include_subfolders: bool = Query(
+            True, description="Include documents from sub-folders"
+        ),
+        max_nodes: int = Query(1000, description="Maximum nodes to return", ge=1),
+    ):
+        """
+        Retrieve the knowledge graph filtered to entities and relations whose
+        source documents belong to the specified folder (and optionally its
+        sub-folders).
+
+        Args:
+            folder_id (str): ID of the folder to filter by
+            include_subfolders (bool): When True, also include documents from
+                all descendant folders (default: True)
+            max_nodes (int): Maximum number of nodes to return (default: 1000)
+
+        Returns:
+            KnowledgeGraph: Filtered knowledge graph with nodes and edges
+        """
+        try:
+            if folder_manager is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Folder management is not available in this deployment",
+                )
+
+            # Validate folder exists
+            folder = await folder_manager.get_folder(folder_id)
+            if folder is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Folder '{folder_id}' not found",
+                )
+
+            # Resolve all folder IDs to include
+            all_folder_ids = [folder_id]
+            if include_subfolders:
+                descendant_ids = await folder_manager.get_descendant_ids(folder_id)
+                all_folder_ids.extend(descendant_ids)
+
+            result = await _build_folder_knowledge_graph(
+                rag,
+                folder_ids=all_folder_ids,
+                max_nodes=max_nodes,
+            )
+            return result
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error getting knowledge graph for folder '{folder_id}': {str(e)}"
+            )
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error getting knowledge graph by folder: {str(e)}",
             )
 
     @router.get("/graph/entity/exists", dependencies=[Depends(combined_auth)])

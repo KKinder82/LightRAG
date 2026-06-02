@@ -905,18 +905,15 @@ async def openai_embed(
     max_token_size: int | None = None,
     client_configs: dict[str, Any] | None = None,
     token_tracker: Any | None = None,
-<<<<<<< HEAD
+
     use_azure: bool = False, # 使用Azure OpenAI服务而不是标准OpenAI。当use_azure=True时，创建AsyncAzureOpenAI客户端。默认值为False。
     azure_deployment: str | None = None, # Azure OpenAI部署名称，仅在use_azure=True时使用。如果未指定，则回退到AZURE_EMBEDDING_DEPLOYMENT环境变量。
     api_version: str | None = None, # Azure OpenAI API版本（例如"2024-02-15-preview"），仅在use_azure=True时使用。如果未指定，则回退到AZURE_EMBEDDING_API_VERSION环境变量。
-=======
-    use_azure: bool = False,
-    azure_deployment: str | None = None,
-    api_version: str | None = None,
+
     context: str = "document",
     query_prefix: str | None = None,
     document_prefix: str | None = None,
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 ) -> np.ndarray:
     """Generate embeddings for a list of texts using OpenAI's API with automatic text truncation.
 

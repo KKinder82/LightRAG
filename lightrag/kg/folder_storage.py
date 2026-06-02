@@ -195,6 +195,7 @@ class FolderManager:
 
         await self._storage.upsert({folder.id: _folder_to_dict(folder)})
         await self._add_to_index(folder.id)
+        await self._storage.index_done_callback()
         logger.info(
             f"[{self._workspace}] Created folder '{folder.name}' (id={folder.id}, parent={parent_id})"
         )
@@ -317,6 +318,7 @@ class FolderManager:
 
         folder.updated_at = _now_iso()
         await self._storage.upsert({folder.id: _folder_to_dict(folder)})
+        await self._storage.index_done_callback()
         logger.info(f"[{self._workspace}] Updated folder '{folder.id}'")
         return folder
 
@@ -359,6 +361,7 @@ class FolderManager:
         current_ids = await self._get_all_ids()
         remaining = [fid for fid in current_ids if fid not in set(to_delete)]
         await self._save_index(remaining)
+        await self._storage.index_done_callback()
 
         logger.info(
             f"[{self._workspace}] Deleted folder '{folder_id}' (and {len(to_delete)-1} descendants)"

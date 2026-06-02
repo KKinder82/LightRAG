@@ -127,6 +127,7 @@ class JsonDocStatusStorage(DocStatusStorage):
         if self._storage_lock is None:
             raise StorageNotInitializedError("JsonDocStatusStorage")
         async with self._storage_lock:
+            # 输出提供的 keys 中不在 self._data 中的 keys，即需要处理的 keys
             return set(keys) - set(self._data.keys())
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
@@ -161,20 +162,18 @@ class JsonDocStatusStorage(DocStatusStorage):
     async def get_docs_by_statuses(
         self, statuses: list[DocStatus]
     ) -> dict[str, DocProcessingStatus]:
-        """Get all documents matching any of the given statuses in a single pass.
-
-        Acquires the storage lock once and scans the in-memory dict once,
-        filtering against a set of status values.  More efficient than N separate
-        get_docs_by_status() calls, which would acquire the lock N times and scan
-        the data N times.
-        """
+        # 根据给定的状态列表获取所有匹配的文档记录。
         if not statuses:
             return {}
         status_values = {s.value for s in statuses}
         result = {}
         async with self._storage_lock:
+            # _data 存储的是什么？
+            #　k， v = self._data.items() 中的 k 是文档 ID，v 是文档数据的字典，包含状态、文件路径、元数据等信息。
             for k, v in self._data.items():
-                if v["status"] not in status_values:
+                #遍历所有数据.
+                if v["status"] not in status_values: 
+                    #不是要查询的状态
                     continue
                 try:
                     data = v.copy()
@@ -238,17 +237,20 @@ class JsonDocStatusStorage(DocStatusStorage):
                 logger.debug(
                     f"[{self.workspace}] Process {os.getpid()} doc status writting {len(data_dict)} records to {self.namespace}"
                 )
-
-                # Write JSON and check if sanitization was applied
+                # 写回磁盘。
                 needs_reload = write_json(data_dict, self._file_name)
 
                 # If data was sanitized, reload cleaned data to update shared memory
                 if needs_reload:
+                    # 需要重新加载。
                     logger.info(
                         f"[{self.workspace}] Reloading sanitized data into shared memory for {self.namespace}"
                     )
+                    # 加载json
                     cleaned_data = load_json(self._file_name)
                     if cleaned_data is not None:
+                        # 需要清理后的数据来更新共享内存。
+                        # Clear the shared dict and update with cleaned data
                         self._data.clear()
                         self._data.update(cleaned_data)
 
@@ -286,10 +288,13 @@ class JsonDocStatusStorage(DocStatusStorage):
         # Prepare data outside the lock: this only mutates the caller-supplied
         # dict values, not shared storage state, so no lock needed here.
         for i, (doc_id, doc_data) in enumerate(data.items(), start=1):
+            # 处理 chunks_list 字段的兼容性问题：如果调用方没有提供 chunks_list 字段，则默认设置为一个空列表。这确保了即使旧数据或调用方未包含该字段，系统也能正常运行，不会因为缺少字段而出错。
             if "chunks_list" not in doc_data:
+                # 保险处理
                 doc_data["chunks_list"] = []
             await _cooperative_yield(i)
         async with self._storage_lock:
+            # 更新数据。
             self._data.update(data)
             await set_all_update_flags(self.namespace, workspace=self.workspace)
 
@@ -476,7 +481,7 @@ class JsonDocStatusStorage(DocStatusStorage):
 
         return None
 
-<<<<<<< HEAD
+
     async def get_docs_by_folder_ids(
         self,
         folder_ids: list[str],
@@ -581,7 +586,7 @@ class JsonDocStatusStorage(DocStatusStorage):
                 if doc_folder_id in folder_id_set:
                     counts[doc_data["status"]] += 1
         return counts
-=======
+
     async def get_doc_by_file_basename(
         self, basename: str
     ) -> Union[tuple[str, dict[str, Any]], None]:
@@ -600,6 +605,9 @@ class JsonDocStatusStorage(DocStatusStorage):
             return None
         async with self._storage_lock:
             for doc_id, doc_data in self._data.items():
+                # 遍历所有文档记录，
+                # 查找 file_path 字段的基线名称与输入 basename 匹配的记录。
+                # 如果找到匹配的记录，返回该记录的 ID 和数据；如果没有找到匹配的记录，返回 None。
                 if doc_data.get("file_path") == basename:
                     return doc_id, doc_data
         return None
@@ -618,7 +626,7 @@ class JsonDocStatusStorage(DocStatusStorage):
                 if doc_data.get("content_hash") == content_hash:
                     return doc_id, doc_data
         return None
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 
     async def drop(self) -> dict[str, str]:
         """Clear shared memory and immediately persist the empty state.

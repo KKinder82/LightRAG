@@ -15,7 +15,7 @@ from pathlib import Path
 TIKTOKEN_ENCODING_NAMES = {"cl100k_base", "p50k_base", "r50k_base", "o200k_base"}
 
 
-def download_tiktoken_cache(cache_dir: str = None, models: list = None):
+def download_tiktoken_cache(cache_dir: str | None = None, models: list | None = None):
     """Download tiktoken models to local cache
 
     Args:

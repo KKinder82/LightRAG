@@ -480,7 +480,7 @@ class TaskState:
 
     future: asyncio.Future
     start_time: float
-    execution_start_time: float = None
+    execution_start_time: float | None = None
     worker_started: bool = False
     cancellation_requested: bool = False
     cleanup_done: bool = False
@@ -855,9 +855,9 @@ class HealthCheckTimeoutError(Exception):
 
 def priority_limit_async_func_call(
     max_size: int,
-    llm_timeout: float = None,
-    max_execution_timeout: float = None,
-    max_task_duration: float = None,
+    llm_timeout: float | None = None,
+    max_execution_timeout: float | None = None,
+    max_task_duration: float | None = None,
     max_queue_size: int = 1000,
     cleanup_timeout: float = 2.0,
     queue_name: str = "limit_async",
@@ -2051,6 +2051,7 @@ async def _cooperative_yield(iteration: int, every: int = 64) -> None:
     in single-worker deployments. Yields every `every` iterations.
     """
     if iteration > 0 and iteration % every == 0:
+        # 每64次，周期性进行协作式让步，允许事件循环处理其他任务，避免单worker部署中的事件循环饥饿
         await asyncio.sleep(0)
 
 
@@ -2508,11 +2509,11 @@ async def use_llm_func_with_cache(
     use_llm_func: callable,
     llm_response_cache: "BaseKVStorage | None" = None,
     system_prompt: str | None = None,
-    max_tokens: int = None,
+    max_tokens: int | None = None,
     history_messages: list[dict[str, str]] = None,
     cache_type: str = "extract",
     chunk_id: str | None = None,
-    cache_keys_collector: list = None,
+    cache_keys_collector: list | None = None,
     response_format: Any | None = None,
     entity_extraction: bool = False,
     llm_cache_identity: Any | None = None,
@@ -2851,6 +2852,7 @@ def normalize_extracted_info(name: str, remove_inner_quotes=False) -> str:
 
 
 def sanitize_text_for_encoding(text: str, replacement_char: str = "") -> str:
+    # 清洗 文本以确保安全的 UTF-8 编码，去除或替换有问题的字符。
     """Sanitize text to ensure safe UTF-8 encoding by removing or replacing problematic characters.
 
     This function handles:
@@ -3178,7 +3180,7 @@ async def apply_rerank_if_enabled(
     retrieved_docs: list[dict],
     global_config: dict,
     enable_rerank: bool = True,
-    top_n: int = None,
+    top_n: int | None = None,
 ) -> list[dict]:
     """
     Apply reranking to retrieved documents if rerank is enabled.
@@ -3263,7 +3265,7 @@ async def process_chunks_unified(
     query_param: "QueryParam",
     global_config: dict,
     source_type: str = "mixed",
-    chunk_token_limit: int = None,  # Add parameter for dynamic token limit
+    chunk_token_limit: int | None = None,  # Add parameter for dynamic token limit
 ) -> list[dict]:
     """
     Unified processing for text chunks: deduplication, chunk_top_k limiting, reranking, and token truncation.
@@ -3733,8 +3735,8 @@ def convert_to_user_format(
     chunks: list[dict],
     references: list[dict],
     query_mode: str,
-    entity_id_to_original: dict = None,
-    relation_id_to_original: dict = None,
+    entity_id_to_original: dict | None = None,
+    relation_id_to_original: dict | None = None,
 ) -> dict[str, Any]:
     """Convert internal data format to user-friendly format using original database data"""
 

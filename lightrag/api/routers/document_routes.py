@@ -45,8 +45,13 @@ from lightrag.parser.routing import (
     resolve_file_parser_directives,
 )
 from lightrag.utils import (
+    compute_mdhash_id,
     generate_track_id,
     move_file_to_parsed_dir,
+)
+from lightrag.utils_pipeline import (
+    normalize_document_file_path,
+    compute_text_content_hash,
 )
 from lightrag.api.utils_api import get_combined_auth_dependency
 from ..config import global_args
@@ -91,6 +96,7 @@ LEGACY_EMPTY_FILE_PATH_SENTINELS = {"", "no-file-path"}
 ARCHIVED_FILE_SUFFIX_RE = re.compile(r"_(?:\d{3}|\d{10,})$")
 
 
+# 标准化文件路径。
 def normalize_file_path(file_path: str | None) -> str:
     """Normalize missing document sources to a single non-null sentinel."""
     if file_path is None:
@@ -391,12 +397,12 @@ class InsertTextRequest(BaseModel):
     Attributes:
         text: The text content to be inserted into the RAG system
         file_source: Source of the text (optional)
-<<<<<<< HEAD
+
         folder_id: Target folder ID for the document (optional)
-=======
+
         chunking: Optional chunking strategy + params; omit to keep the
             default fixed-token behavior and addon_params defaults.
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
     """
 
     text: str = Field(
@@ -406,14 +412,15 @@ class InsertTextRequest(BaseModel):
     file_source: Optional[str] = Field(
         default=None, min_length=0, description="File Source"
     )
-<<<<<<< HEAD
+
     folder_id: Optional[str] = Field(
         default=None, description="Target folder ID for the document"
-=======
+    )
+
     chunking: Optional[TextChunkingConfig] = Field(
         default=None,
         description="Chunking strategy and params; omit for default fixed-token chunking",
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
     )
 
     @field_validator("text", mode="after")
@@ -431,9 +438,9 @@ class InsertTextRequest(BaseModel):
             "example": {
                 "text": "This is a sample text to be inserted into the RAG system.",
                 "file_source": "Source of the text (optional)",
-<<<<<<< HEAD
+
                 "folder_id": None,
-=======
+
                 "chunking": {
                     "strategy": "fixed_token",
                     "params": {
@@ -443,7 +450,7 @@ class InsertTextRequest(BaseModel):
                         "split_by_character_only": True,
                     },
                 },
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
             }
         }
     )
@@ -465,14 +472,15 @@ class InsertTextsRequest(BaseModel):
     file_sources: Optional[list[str]] = Field(
         default=None, min_length=0, description="Sources of the texts"
     )
-<<<<<<< HEAD
+
     folder_id: Optional[str] = Field(
         default=None, description="Target folder ID for all documents in this request"
-=======
+    )
+
     chunking: Optional[TextChunkingConfig] = Field(
         default=None,
         description="Shared chunking strategy and params for all texts; omit for default fixed-token chunking",
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
     )
 
     @field_validator("texts", mode="after")
@@ -500,14 +508,14 @@ class InsertTextsRequest(BaseModel):
                 "file_sources": [
                     "First file source (optional)",
                 ],
-<<<<<<< HEAD
+
                 "folder_id": None,
-=======
+
                 "chunking": {
                     "strategy": "recursive_character",
                     "params": {"chunk_token_size": 1000},
                 },
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
             }
         }
     )
@@ -1034,7 +1042,7 @@ class PipelineStatusResponse(BaseModel):
 class DocumentManager:
     def __init__(
         self,
-        input_dir: str,
+        input_dir: str, # 目录
         workspace: str = "",  # New parameter for workspace isolation
         supported_extensions: tuple = (
             ".txt",
@@ -1191,6 +1199,7 @@ def get_doc_track_id(doc_status: Any) -> str:
 async def get_existing_doc_by_file_path_candidates(
     doc_status: Any, file_path: Path | str
 ) -> dict[str, Any] | None:
+    # 通过标准文件名，即上传目录下的相对路径，查找已存在的文档（如果有）。如果file_path无效或未提供，返回None。
     """Find an existing document by canonical basename."""
     basename = normalize_file_path(str(file_path))
     if basename == UNKNOWN_FILE_SOURCE:
@@ -1203,6 +1212,9 @@ async def get_existing_doc_by_file_path_candidates(
 
 
 async def _reserve_enqueue_slot(rag: LightRAG) -> bool:
+    # 检查是否允许，并预占一个待处理的上传/插入槽位（pending enqueue slot）。
+    # 如果正在扫描分类或执行破坏性操作，则拒绝新的上传/插入请求，返回HTTP 409。
+    #   否则，增加pending_enqueues计数器以通知扫描任务有新的待处理上传/插入。
     """Atomically check exclusive-writer state and reserve a
     pending-enqueue slot.
 
@@ -1260,6 +1272,7 @@ async def _reserve_enqueue_slot(rag: LightRAG) -> bool:
     )
     async with pipeline_status_lock:
         if pipeline_status.get("scanning_exclusive"):
+            # 如果正在扫描分类阶段，拒绝新的上传/插入请求，返回HTTP 409
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -1269,6 +1282,7 @@ async def _reserve_enqueue_slot(rag: LightRAG) -> bool:
                 ),
             )
         if pipeline_status.get("destructive_busy"):
+            # 如果正在执行破坏性操作，拒绝新的上传/插入请求，返回HTTP 409
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -1451,6 +1465,7 @@ async def _release_enqueue_slot(rag: LightRAG) -> None:
 
 
 def find_existing_file_by_file_path(input_dir: Path, file_path: str) -> Path | None:
+    # 根据文件路径，查询存储的文件。
     """Find an input-dir file whose canonical basename matches ``file_path``.
 
     Callers pass the stored canonical ``file_path`` (already hint-stripped);
@@ -1461,7 +1476,9 @@ def find_existing_file_by_file_path(input_dir: Path, file_path: str) -> Path | N
         return None
     try:
         for candidate in input_dir.iterdir():
+            # 一个一个文件遍历
             if not candidate.is_file():
+                # 不是文件，查找下一个
                 continue
             if normalize_file_path(candidate.name) == file_path:
                 return candidate
@@ -1616,7 +1633,7 @@ async def record_scan_warning(rag: LightRAG, message: str) -> None:
 # These functions run in thread pool via asyncio.to_thread() to avoid blocking the event loop
 
 
-def _extract_pdf_pypdf(file_bytes: bytes, password: str = None) -> str:
+def _extract_pdf_pypdf(file_bytes: bytes, password: str|None = None) -> str:
     """Extract PDF content using pypdf (synchronous).
 
     Args:
@@ -1748,7 +1765,7 @@ def _extract_pptx(file_bytes: bytes) -> str:
     for slide in prs.slides:
         for shape in slide.shapes:
             if hasattr(shape, "text"):
-                content += shape.text + "\n"
+                content += shape.text + "\n" # type: ignore
     return content
 
 
@@ -1864,12 +1881,12 @@ def _extract_xlsx(file_bytes: bytes) -> str:
 async def pipeline_enqueue_file(
     rag: LightRAG,
     file_path: Path,
-    track_id: str = None,
-<<<<<<< HEAD
+    track_id: str | None = None,
+
     folder_id: Optional[str] = None,
-=======
+
     from_scan: bool = False,
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 ) -> tuple[bool, str]:
     """Add a file to the queue for processing
 
@@ -1922,6 +1939,7 @@ async def pipeline_enqueue_file(
 
         api_process_options = process_options or PROCESS_OPTION_CHUNK_FIXED
         if extraction_engine != PARSER_ENGINE_LEGACY:
+            # 不是传统解析器，直接进入排队流程，不进行预处理
             try:
                 enqueue_kwargs = {
                     "file_paths": str(file_path),
@@ -1961,6 +1979,7 @@ async def pipeline_enqueue_file(
                 )
                 return False, track_id
 
+        # 传统解析器需要预处理文件内容（如解密PDF、提取DOCX文本等），所以继续往下走内容提
         file = None
         try:
             async with aiofiles.open(file_path, "rb") as f:
@@ -2258,8 +2277,11 @@ async def pipeline_enqueue_file(
 
                 # Tag document with folder_id if provided
                 if folder_id:
-                    sanitized = sanitize_text_for_encoding(content)
-                    doc_id = compute_mdhash_id(sanitized, prefix="doc-")
+                    # Use the same doc_id formula as apipeline_enqueue_documents:
+                    # for known sources (files with a name), the id is derived from
+                    # the canonical filename, not the content.
+                    canonical = normalize_document_file_path(file_path.name)
+                    doc_id = compute_mdhash_id(canonical, prefix="doc-")
                     existing = await rag.doc_status.get_by_id(doc_id)
                     if existing:
                         meta = existing.get("metadata") or {}
@@ -2337,7 +2359,7 @@ async def pipeline_enqueue_file(
 async def pipeline_index_file(
     rag: LightRAG,
     file_path: Path,
-    track_id: str = None,
+    track_id: str | None = None,
     folder_id: Optional[str] = None,
 ):
     """Index a file with track_id
@@ -2349,13 +2371,11 @@ async def pipeline_index_file(
         folder_id: Optional folder ID to tag the document with
     """
     try:
-<<<<<<< HEAD
+
         success, returned_track_id = await pipeline_enqueue_file(
             rag, file_path, track_id, folder_id=folder_id
         )
-=======
-        success, _ = await pipeline_enqueue_file(rag, file_path, track_id)
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
         if success:
             await rag.apipeline_process_enqueue_documents()
 
@@ -2367,7 +2387,7 @@ async def pipeline_index_file(
 async def pipeline_index_files(
     rag: LightRAG,
     file_paths: List[Path],
-    track_id: str = None,
+    track_id: str | None = None,
     from_scan: bool = False,
 ):
     """Index multiple files sequentially to avoid high CPU load
@@ -2540,7 +2560,7 @@ async def pipeline_index_texts(
     rag: LightRAG,
     texts: List[str],
     file_sources: List[str] = None,
-    track_id: str = None,
+    track_id: str | None = None,
     chunking: Optional[TextChunkingConfig] = None,
 ):
     """Index a list of texts with track_id
@@ -2580,19 +2600,23 @@ async def pipeline_index_texts_with_folder_id(
     rag: LightRAG,
     texts: List[str],
     file_sources: List[str] = None,
-    track_id: str = None,
+    track_id: str | None = None,
     folder_id: Optional[str] = None,
+    chunking: Optional[TextChunkingConfig] = None,
 ):
     """Index texts and tag resulting documents with folder_id.
 
     Wraps pipeline_index_texts and, after completion, updates doc_status
     metadata with the given folder_id for each indexed document.
     """
-    await pipeline_index_texts(rag, texts, file_sources, track_id)
+    await pipeline_index_texts(rag, texts, file_sources, track_id, chunking=chunking)
     if folder_id and texts:
         for text in texts:
-            sanitized = sanitize_text_for_encoding(text)
-            doc_id = compute_mdhash_id(sanitized, prefix="doc-")
+            # Use the same doc_id formula as apipeline_enqueue_documents for RAW text:
+            # doc_id = compute_mdhash_id(content_hash, prefix="doc-") where
+            # content_hash = compute_text_content_hash(content).
+            content_hash = compute_text_content_hash(text)
+            doc_id = compute_mdhash_id(content_hash, prefix="doc-")
             existing = await rag.doc_status.get_by_id(doc_id)
             if existing:
                 meta = existing.get("metadata") or {}
@@ -2602,7 +2626,7 @@ async def pipeline_index_texts_with_folder_id(
 
 
 async def run_scanning_process(
-    rag: LightRAG, doc_manager: DocumentManager, track_id: str = None
+    rag: LightRAG, doc_manager: DocumentManager, track_id: str | None = None
 ):
     """Background task to scan and index documents
 
@@ -3184,86 +3208,16 @@ def create_document_routes(
             track_id=track_id,
         )
 
-    @router.post(
-        "/upload", response_model=InsertResponse, dependencies=[Depends(combined_auth)]
+    @router.post("/upload"
+                 , response_model=InsertResponse
+                 , dependencies=[Depends(combined_auth)]
     )
     async def upload_to_input_dir(
         background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
         folder_id: Optional[str] = None,
     ):
-        """
-        Upload a file to the input directory and index it.
-
-        This API endpoint accepts a file through an HTTP POST request, checks if the
-        uploaded file is of a supported type, saves it in the specified input directory,
-        indexes it for retrieval, and returns a success status with relevant details.
-
-        **File Size Limit:**
-        - Configurable via `MAX_UPLOAD_SIZE` environment variable (default: 100MB)
-        - Set to `None` or `0` for unlimited upload size
-        - Returns HTTP 413 (Request Entity Too Large) if file exceeds limit
-
-        **Duplicate Detection Behavior:**
-
-        This endpoint handles two types of duplicate scenarios differently:
-
-        1. **Filename Duplicate (Synchronous Detection)**:
-           - Detected immediately, before any file is written.
-           - File name is treated as the unique document key.  Both
-             ``doc_status`` and the INPUT directory are checked under the
-             canonical (parser-hint stripped) basename so ``abc.docx`` and
-             ``abc.[native].docx`` map to the same record.
-           - **HTTP 409** is returned when a same-name record already exists.
-             The response detail names the conflict source ("Document
-             storage already contains ..." or "Input directory already
-             contains ...").  Clients must delete the existing document
-             (``DELETE /documents/{doc_id}``) before re-uploading; there is
-             no longer a 200 ``status="duplicated"`` soft-fail response.
-
-        2. **Content Duplicate (Asynchronous Detection)**:
-           - Detected during background processing after content extraction
-           - Returns `status="success"` with a new track_id immediately
-           - The duplicate is detected later when processing the file content
-           - Use `/documents/track_status/{track_id}` to check the final result:
-             - Document will have `status="FAILED"`
-             - `error_msg` contains "Content already exists. Original doc_id: xxx"
-             - `metadata.is_duplicate=true` with reference to original document
-             - `metadata.original_doc_id` points to the existing document
-             - `metadata.original_track_id` shows the original upload's track_id
-
-        **Why Different Behavior?**
-        - Filename check is fast (simple lookup), done synchronously
-        - Content extraction is expensive (PDF/DOCX parsing), done asynchronously
-        - This design prevents blocking the client during expensive operations
-
-        **Concurrency Constraint:**
-        - The endpoint refuses with HTTP 409 only while one of the
-          following exclusive-writer states is set:
-          ``pipeline_status["scanning_exclusive"]`` (a scan is in its
-          classification phase, reading and possibly mutating doc_status)
-          or ``pipeline_status["destructive_busy"]`` (``/documents/clear``
-          or per-doc delete is dropping storages / removing input files).
-          Wait for the running job to finish before re-submitting.
-        - ``busy=True`` from the processing loop, and a scan in its
-          processing phase (``scanning=True`` with
-          ``scanning_exclusive=False``), do NOT block uploads — uploads
-          are accepted concurrently and the running pipeline picks them
-          up via its ``request_pending`` mechanism.
-
-        Args:
-            background_tasks: FastAPI BackgroundTasks for async processing
-            file (UploadFile): The file to be uploaded. It must have an allowed extension.
-
-        Returns:
-            InsertResponse: A response object containing the upload status and a message.
-                - status="success": File accepted and queued for processing
-
-        Raises:
-            HTTPException: 400 unsupported file type, 409 same-name
-                conflict or scan-classifying / destructive job in
-                flight, 413 file too large, 500 other errors.
-        """
+        
         slot_reserved = False
         try:
             # Reject upload while a scan is in its CLASSIFICATION
@@ -3315,10 +3269,12 @@ def create_document_routes(
             # accept the upload.  Replacing an existing document requires an
             # explicit DELETE first; we no longer write a "duplicated" 200
             # response that silently no-ops.
+            # 如果文件存储，則返回文件，不存在，返回 None
             existing_doc_data = await get_existing_doc_by_file_path_candidates(
                 rag.doc_status, file_path
             )
             if existing_doc_data:
+                # 文件存在
                 status = get_doc_status_value(existing_doc_data) or "unknown"
                 raise HTTPException(
                     status_code=409,
@@ -3374,6 +3330,7 @@ def create_document_routes(
 
             # Cleanup after file is closed
             if needs_cleanup:
+                # 文件过大，保存了一半
                 try:
                     file_path.unlink()
                 except Exception as cleanup_error:
@@ -3388,12 +3345,7 @@ def create_document_routes(
 
             track_id = generate_track_id("upload")
 
-<<<<<<< HEAD
-            # Add to background tasks and get track_id
-            background_tasks.add_task(
-                pipeline_index_file, rag, file_path, track_id, folder_id=folder_id
-            )
-=======
+
             # Bg task: enqueue + trigger processing, then release the slot.
             # ``pipeline_index_file`` does both: it calls
             # ``pipeline_enqueue_file`` (writes doc_status / full_docs) and
@@ -3404,7 +3356,7 @@ def create_document_routes(
             # loop's request_pending mechanism.
             async def _indexing_task():
                 try:
-                    await pipeline_index_file(rag, file_path, track_id)
+                    await pipeline_index_file(rag, file_path, track_id, folder_id=folder_id)
                 finally:
                     await _release_enqueue_slot(rag)
 
@@ -3412,7 +3364,7 @@ def create_document_routes(
             # Ownership of the slot transferred to the bg task — the
             # finally block below must NOT release it again.
             slot_reserved = False
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 
             return InsertResponse(
                 status="success",
@@ -3507,32 +3459,15 @@ def create_document_routes(
             # Generate track_id for text insertion
             track_id = generate_track_id("insert")
 
-<<<<<<< HEAD
-            if request.folder_id:
-                background_tasks.add_task(
-                    pipeline_index_texts_with_folder_id,
-                    rag,
-                    [request.text],
-                    file_sources=[request.file_source],
-                    track_id=track_id,
-                    folder_id=request.folder_id,
-                )
-            else:
-                background_tasks.add_task(
-                    pipeline_index_texts,
-                    rag,
-                    [request.text],
-                    file_sources=[request.file_source],
-                    track_id=track_id,
-                )
-=======
+
             async def _indexing_task():
                 try:
-                    await pipeline_index_texts(
+                    await pipeline_index_texts_with_folder_id(
                         rag,
                         [request.text],
                         file_sources=[normalized_file_source],
                         track_id=track_id,
+                        folder_id=request.folder_id,
                         chunking=request.chunking,
                     )
                 finally:
@@ -3540,7 +3475,7 @@ def create_document_routes(
 
             background_tasks.add_task(_indexing_task)
             slot_reserved = False
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 
             return InsertResponse(
                 status="success",
@@ -3651,32 +3586,15 @@ def create_document_routes(
             # Generate track_id for texts insertion
             track_id = generate_track_id("insert")
 
-<<<<<<< HEAD
-            if request.folder_id:
-                background_tasks.add_task(
-                    pipeline_index_texts_with_folder_id,
-                    rag,
-                    request.texts,
-                    file_sources=request.file_sources,
-                    track_id=track_id,
-                    folder_id=request.folder_id,
-                )
-            else:
-                background_tasks.add_task(
-                    pipeline_index_texts,
-                    rag,
-                    request.texts,
-                    file_sources=request.file_sources,
-                    track_id=track_id,
-                )
-=======
+
             async def _indexing_task():
                 try:
-                    await pipeline_index_texts(
+                    await pipeline_index_texts_with_folder_id(
                         rag,
                         request.texts,
                         file_sources=normalized_file_sources,
                         track_id=track_id,
+                        folder_id=request.folder_id,
                         chunking=request.chunking,
                     )
                 finally:
@@ -3684,7 +3602,7 @@ def create_document_routes(
 
             background_tasks.add_task(_indexing_task)
             slot_reserved = False
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 
             return InsertResponse(
                 status="success",
@@ -4478,7 +4396,7 @@ def create_document_routes(
                 return result
 
             query_task_create_start = time.perf_counter()
-<<<<<<< HEAD
+
 
             # Resolve folder IDs when folder_id filter is requested
             if request.folder_id is not None and folder_manager is not None:
@@ -4503,20 +4421,21 @@ def create_document_routes(
                             sort_direction=request.sort_direction,
                         ),
                     )
-=======
-            docs_task = asyncio.create_task(
-                _timed_call(
-                    "get_docs_paginated",
-                    rag.doc_status.get_docs_paginated(
-                        status_filter=request.status_filter,
-                        status_filters=request.status_filters,
-                        page=request.page,
-                        page_size=request.page_size,
-                        sort_field=request.sort_field,
-                        sort_direction=request.sort_direction,
-                    ),
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
                 )
+                # docs_task = asyncio.create_task(
+                #     _timed_call(
+                #         "get_docs_paginated",
+                #         rag.doc_status.get_docs_paginated(
+                #             status_filter=request.status_filter,
+                #             status_filters=request.status_filters,
+                #             page=request.page,
+                #             page_size=request.page_size,
+                #             sort_field=request.sort_field,
+                #             sort_direction=request.sort_direction,
+                #         ),
+
+                #     )
+                # )
                 status_counts_task = asyncio.create_task(
                     _timed_call(
                         "get_status_counts_by_folder_ids",

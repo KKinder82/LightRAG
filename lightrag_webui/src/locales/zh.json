@@ -37,6 +37,7 @@
     "cancel": "取消",
     "save": "保存",
     "saving": "保存中...",
+    "deleting": "删除中...",
     "saveFailed": "保存失败"
   },
   "documentPanel": {
@@ -87,6 +88,12 @@
       "tooltip": "上传文档",
       "title": "上传文档",
       "description": "拖拽文件到此处或点击浏览",
+      "folder": {
+        "label": "目标目录",
+        "placeholder": "选择目录",
+        "none": "不放入目录",
+        "description": "上传后的文档会绑定到这里选择的目录。"
+      },
       "single": {
         "uploading": "正在上传 {{name}}：{{percent}}%",
         "success": "上传成功：\n{{name}} 上传完成",
@@ -164,6 +171,26 @@
       "hideButton": "隐藏",
       "showFileNameTooltip": "显示文件名",
       "hideFileNameTooltip": "隐藏文件名",
+      "folders": {
+        "filterLabel": "目录范围",
+        "filterPlaceholder": "选择目录",
+        "allDocuments": "全部文档",
+        "includeSubfolders": "包含子目录",
+        "createButton": "新建目录",
+        "createTitle": "创建目录",
+        "createDescription": "在当前选中的目录下创建一个新目录。",
+        "createSubmit": "创建",
+        "parentLabel": "父目录",
+        "parentRoot": "根目录",
+        "nameLabel": "目录名称",
+        "namePlaceholder": "请输入目录名称",
+        "descriptionLabel": "描述",
+        "descriptionPlaceholder": "可选目录描述",
+        "refreshTooltip": "刷新目录树",
+        "loadFailed": "加载目录失败\n{{error}}",
+        "createSuccess": "目录“{{name}}”已创建",
+        "createFailed": "创建目录失败\n{{error}}"
+      },
       "details": {
         "title": "状态详情",
         "openTooltip": "查看状态详情",
@@ -172,6 +199,47 @@
         "copyTooltip": "复制状态详情",
         "copySuccess": "状态详情已复制",
         "copyFailed": "复制状态详情失败"
+      }
+    },
+    "folderExplorer": {
+      "title": "目录",
+      "allDocuments": "全部文档",
+      "loading": "加载目录中...",
+      "empty": "暂无目录",
+      "namePlaceholder": "目录名称",
+      "newRootFolder": "新建目录",
+      "refresh": "刷新",
+      "hidePanel": "隐藏目录面板",
+      "showPanel": "显示目录面板",
+      "addSubfolder": "新建子目录",
+      "rename": "重命名",
+      "delete": "删除",
+      "expand": "展开",
+      "collapse": "折叠",
+      "includeSubfolders": "包含子目录",
+      "createSuccess": "目录 \"{{name}}\" 已创建",
+      "createFailed": "创建目录失败\n{{error}}",
+      "renameSuccess": "已重命名为 \"{{name}}\"",
+      "renameFailed": "重命名失败\n{{error}}",
+      "deleteSuccess": "目录 \"{{name}}\" 已删除",
+      "deleteFailed": "删除目录失败\n{{error}}",
+      "moveSuccess": "目录已移动",
+      "moveFailed": "移动目录失败\n{{error}}",
+      "moveIntoDescendantError": "不能将目录移入其子目录",
+      "deleteDialog": {
+        "title": "删除目录",
+        "description": "删除目录 \"{{name}}\"？文档不会被删除。",
+        "descriptionWithChildren": "目录 \"{{name}}\" 包含子目录，请选择删除方式：",
+        "deleteFolderOnly": "仅删除此目录",
+        "deleteRecursive": "递归删除全部",
+        "confirm": "删除"
+      },
+      "tooltip": {
+        "subfolders": "子目录",
+        "total": "共计",
+        "directFiles": "文档（直接）",
+        "totalFiles": "文档（含子目录）",
+        "loading": "加载统计中..."
       }
     },
     "pipelineStatus": {
@@ -389,6 +457,13 @@
       "refreshGlobalTooltip": "刷新全图数据和重置搜索历史",
       "refreshCurrentLabelTooltip": "刷新当前页面图数据",
       "refreshingTooltip": "正在刷新数据..."
+    },
+    "folderFilter": {
+      "selectTooltip": "按目录过滤知识图谱",
+      "activeTooltip": "当前按目录过滤：{{folder}}",
+      "clearFolderFilter": "清除目录过滤",
+      "loading": "正在加载目录...",
+      "noFolders": "暂无可用目录"
     },
     "emptyGraph": "无数据(请重载图形数据)"
   },

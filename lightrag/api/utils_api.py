@@ -93,7 +93,7 @@ for path in whitelist_paths:
 auth_configured = bool(auth_handler.accounts)
 
 
-# 获取合并的用户认证依赖项
+# 联合用户认证（信赖项）
 def get_combined_auth_dependency(api_key: Optional[str] = None):
     """
     Create a combined authentication dependency that implements authentication logic

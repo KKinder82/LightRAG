@@ -48,7 +48,7 @@ async def nvidia_openai_embed(
     model: str = "nvidia/llama-3.2-nv-embedqa-1b-v1",
     # refer to https://build.nvidia.com/nim?filters=usecase%3Ausecase_text_to_embedding
     base_url: str = "https://integrate.api.nvidia.com/v1",
-    api_key: str = None,
+    api_key: str | None = None,
     input_type: str = "passage",  # query for retrieval, passage for embedding
     trunc: str = "NONE",  # NONE or START or END
     encode: str = "float",  # float or base64

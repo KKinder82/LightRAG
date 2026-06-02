@@ -527,8 +527,8 @@ async def global_extract_gemini_async(
     system_prompt: str,
     model_name: str,
     client,
-    thinking_level: str = None,
-    thinking_budget: int = None,
+    thinking_level: str | None = None,
+    thinking_budget: int | None = None,
 ) -> dict:
     thinking_config = None
     if thinking_level and thinking_level.upper() in (
@@ -570,7 +570,7 @@ async def global_extract_openai_async(
     system_prompt: str,
     model_name: str,
     client,
-    reasoning_effort: str = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
     request_params = {
         "model": model_name,
@@ -603,8 +603,8 @@ async def global_verify_gemini_async(
     system_prompt: str,
     model_name: str,
     client,
-    thinking_level: str = None,
-    thinking_budget: int = None,
+    thinking_level: str | None = None,
+    thinking_budget: int | None = None,
 ) -> dict:
     thinking_config = None
     if thinking_level and thinking_level.upper() in (
@@ -646,7 +646,7 @@ async def global_verify_openai_async(
     system_prompt: str,
     model_name: str,
     client,
-    reasoning_effort: str = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
     request_params = {
         "model": model_name,
@@ -679,8 +679,8 @@ async def audit_block_gemini_async(
     system_prompt: str,
     model_name: str,
     client,
-    thinking_level: str = None,
-    thinking_budget: int = None,
+    thinking_level: str | None = None,
+    thinking_budget: int | None = None,
 ) -> dict:
     """
     Audit a text block using Google Gemini with strict JSON mode (async version).
@@ -745,7 +745,7 @@ async def audit_block_openai_async(
     system_prompt: str,
     model_name: str,
     client,
-    reasoning_effort: str = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
     """
     Audit a text block using OpenAI with strict JSON mode (async version).

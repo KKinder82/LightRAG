@@ -85,9 +85,9 @@ def get_default_host(binding_type: str) -> str:
     )  # fallback to ollama if unknown
 
 
-<<<<<<< HEAD
+
 # 验证认证配置，确保在启用 JWT 认证时 TOKEN_SECRET 已正确设置
-=======
+
 def resolve_asymmetric_embedding_opt_in(
     *,
     binding: str,
@@ -158,7 +158,7 @@ def get_embedding_prefix_config(env_key: str) -> tuple[str | None, bool]:
     return value, True
 
 
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 def validate_auth_configuration(args: argparse.Namespace) -> None:
     """Reject insecure JWT auth settings before the API starts."""
     auth_accounts = (getattr(args, "auth_accounts", "") or "").strip()
@@ -171,9 +171,9 @@ def validate_auth_configuration(args: argparse.Namespace) -> None:
         )
 
 
-<<<<<<< HEAD
+
 # 分析参数。
-=======
+
 def _is_set(value: str | None) -> bool:
     return bool((value or "").strip())
 
@@ -245,7 +245,7 @@ def get_binding_env_value(env_key: str, default: str) -> str:
     return normalize_binding_name(get_env_value(env_key, default)) or default
 
 
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 def parse_args() -> argparse.Namespace:
     """
     Parse command line arguments with environment variable fallback

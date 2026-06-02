@@ -1904,7 +1904,7 @@ async def _merge_nodes_then_upsert(
     knowledge_graph_inst: BaseGraphStorage,
     entity_vdb: BaseVectorStorage | None,
     global_config: dict,
-    pipeline_status: dict = None,
+    pipeline_status: dict | None = None,
     pipeline_status_lock=None,
     llm_response_cache: BaseKVStorage | None = None,
     entity_chunks_storage: BaseKVStorage | None = None,
@@ -2235,10 +2235,10 @@ async def _merge_edges_then_upsert(
     relationships_vdb: BaseVectorStorage | None,
     entity_vdb: BaseVectorStorage | None,
     global_config: dict,
-    pipeline_status: dict = None,
+    pipeline_status: dict | None = None,
     pipeline_status_lock=None,
     llm_response_cache: BaseKVStorage | None = None,
-    added_entities: list = None,  # New parameter to track entities added during edge processing
+    added_entities: list | None = None,  # New parameter to track entities added during edge processing
     relation_chunks_storage: BaseKVStorage | None = None,
     entity_chunks_storage: BaseKVStorage | None = None,
 ):
@@ -2820,8 +2820,8 @@ async def merge_nodes_and_edges(
     global_config: dict[str, str],
     full_entities_storage: BaseKVStorage = None,
     full_relations_storage: BaseKVStorage = None,
-    doc_id: str = None,
-    pipeline_status: dict = None,
+    doc_id: str | None = None,
+    pipeline_status: dict | None = None,
     pipeline_status_lock=None,
     llm_response_cache: BaseKVStorage | None = None,
     entity_chunks_storage: BaseKVStorage | None = None,
@@ -3221,7 +3221,7 @@ async def merge_nodes_and_edges(
 async def extract_entities(
     chunks: dict[str, TextChunkSchema],
     global_config: dict[str, str],
-    pipeline_status: dict = None,
+    pipeline_status: dict | None = None,
     pipeline_status_lock=None,
     llm_response_cache: BaseKVStorage | None = None,
     text_chunks_storage: BaseKVStorage | None = None,
@@ -4556,7 +4556,7 @@ async def _merge_all_chunks(
     text_chunks_db: BaseKVStorage = None,
     query_param: QueryParam = None,
     chunks_vdb: BaseVectorStorage = None,
-    chunk_tracking: dict = None,
+    chunk_tracking: dict | None = None,
     query_embedding: list[float] = None,
 ) -> list[dict]:
     """
@@ -4656,9 +4656,9 @@ async def _build_context_str(
     query: str,
     query_param: QueryParam,
     global_config: dict[str, str],
-    chunk_tracking: dict = None,
-    entity_id_to_original: dict = None,
-    relation_id_to_original: dict = None,
+    chunk_tracking: dict | None = None,
+    entity_id_to_original: dict | None = None,
+    relation_id_to_original: dict | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """
     Build the final LLM context string with token processing.
@@ -5074,9 +5074,9 @@ async def _find_related_text_unit_from_entities(
     query_param: QueryParam,
     text_chunks_db: BaseKVStorage,
     knowledge_graph_inst: BaseGraphStorage,
-    query: str = None,
+    query: str | None = None,
     chunks_vdb: BaseVectorStorage = None,
-    chunk_tracking: dict = None,
+    chunk_tracking: dict | None = None,
     query_embedding=None,
 ):
     """
@@ -5325,9 +5325,9 @@ async def _find_related_text_unit_from_relations(
     query_param: QueryParam,
     text_chunks_db: BaseKVStorage,
     entity_chunks: list[dict] = None,
-    query: str = None,
+    query: str | None = None,
     chunks_vdb: BaseVectorStorage = None,
-    chunk_tracking: dict = None,
+    chunk_tracking: dict | None = None,
     query_embedding=None,
 ):
     """

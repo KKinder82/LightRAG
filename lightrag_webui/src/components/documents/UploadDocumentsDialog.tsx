@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { FileRejection } from 'react-dropzone'
 import Button from '@/components/ui/Button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select'
 import {
   Dialog,
   DialogContent,
@@ -25,17 +26,37 @@ interface UploadDocumentsDialogProps {
    * than waiting for the whole sequential batch to finish).
    */
   onUploadBatchAccepted?: () => void
+  folderOptions?: Array<{
+    id: string
+    label: string
+  }>
+  defaultFolderId?: string | null
 }
+
+const NO_FOLDER_VALUE = '__no-folder__'
 
 export default function UploadDocumentsDialog({
   onDocumentsUploaded,
-  onUploadBatchAccepted
+  onUploadBatchAccepted,
+  folderOptions = [],
+  defaultFolderId = null
 }: UploadDocumentsDialogProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [progresses, setProgresses] = useState<Record<string, number>>({})
   const [fileErrors, setFileErrors] = useState<Record<string, string>>({})
+  const [selectedFolderId, setSelectedFolderId] = useState<string>(
+    defaultFolderId ?? NO_FOLDER_VALUE
+  )
+  const [previousDefaultFolderId, setPreviousDefaultFolderId] = useState<string | null>(
+    defaultFolderId
+  )
+
+  if (previousDefaultFolderId !== defaultFolderId) {
+    setPreviousDefaultFolderId(defaultFolderId)
+    setSelectedFolderId(defaultFolderId ?? NO_FOLDER_VALUE)
+  }
 
   const handleRejectedFiles = useCallback(
     (rejectedFiles: FileRejection[]) => {
@@ -105,13 +126,20 @@ export default function UploadDocumentsDialog({
               [file.name]: 0
             }))
 
-            const result = await uploadDocument(file, (percentCompleted: number) => {
-              console.debug(t('documentPanel.uploadDocuments.single.uploading', { name: file.name, percent: percentCompleted }))
-              setProgresses((pre) => ({
-                ...pre,
-                [file.name]: percentCompleted
-              }))
-            })
+            const result = await uploadDocument(
+              file,
+              {
+                folderId:
+                  selectedFolderId === NO_FOLDER_VALUE ? null : selectedFolderId
+              },
+              (percentCompleted: number) => {
+                console.debug(t('documentPanel.uploadDocuments.single.uploading', { name: file.name, percent: percentCompleted }))
+                setProgresses((pre) => ({
+                  ...pre,
+                  [file.name]: percentCompleted
+                }))
+              }
+            )
 
             if (result.status !== 'success') {
               uploadErrors[file.name] = result.message
@@ -200,7 +228,7 @@ export default function UploadDocumentsDialog({
         setIsUploading(false)
       }
     },
-    [setIsUploading, setProgresses, setFileErrors, t, onDocumentsUploaded, onUploadBatchAccepted]
+    [setIsUploading, setProgresses, setFileErrors, t, onDocumentsUploaded, onUploadBatchAccepted, selectedFolderId]
   )
 
   return (
@@ -229,6 +257,33 @@ export default function UploadDocumentsDialog({
             {t('documentPanel.uploadDocuments.description')}
           </DialogDescription>
         </DialogHeader>
+        <div className="space-y-2">
+          <div className="text-sm font-medium">
+            {t('documentPanel.uploadDocuments.folder.label')}
+          </div>
+          <Select
+            value={selectedFolderId}
+            onValueChange={setSelectedFolderId}
+            disabled={isUploading}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t('documentPanel.uploadDocuments.folder.placeholder')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_FOLDER_VALUE}>
+                {t('documentPanel.uploadDocuments.folder.none')}
+              </SelectItem>
+              {folderOptions.map((folder) => (
+                <SelectItem key={folder.id} value={folder.id}>
+                  {folder.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t('documentPanel.uploadDocuments.folder.description')}
+          </p>
+        </div>
         <FileUploader
           maxFileCount={Infinity}
           maxSize={200 * 1024 * 1024}

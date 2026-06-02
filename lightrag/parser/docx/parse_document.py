@@ -79,7 +79,7 @@ def print_error(title: str, details: str, solution: str):
     print("\n" + "=" * 80 + "\n", file=sys.stderr)
 
 
-def truncate_heading(heading_text: str, para_id: str = None) -> str:
+def truncate_heading(heading_text: str, para_id: str | None = None) -> str:
     """
     Truncate heading if it exceeds MAX_HEADING_LENGTH.
 
@@ -1489,7 +1489,7 @@ def _flush_current_block(
 def extract_docx_blocks(
     file_path: str,
     debug: bool = False,
-    fixlevel: int = None,
+    fixlevel: int | None = None,
     drawing_context: DrawingExtractionContext = None,
     parse_warnings: dict | None = None,
     parse_metadata: dict | None = None,

@@ -82,8 +82,8 @@ def workspace_filter_condition(workspace: str) -> models.FieldCondition:
 def _find_legacy_collection(
     client: QdrantClient,
     namespace: str,
-    workspace: str = None,
-    model_suffix: str = None,
+    workspace: str | None = None,
+    model_suffix: str | None = None,
 ) -> str | None:
     """
     Find legacy collection with backward compatibility support.

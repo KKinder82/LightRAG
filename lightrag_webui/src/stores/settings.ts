@@ -13,6 +13,9 @@ interface SettingsState {
   showFileName: boolean
   setShowFileName: (show: boolean) => void
 
+  showFolderPanel: boolean
+  setShowFolderPanel: (show: boolean) => void
+
   documentsPageSize: number
   setDocumentsPageSize: (size: number) => void
 
@@ -55,6 +58,10 @@ interface SettingsState {
   // Retrieval settings
   queryLabel: string
   setQueryLabel: (queryLabel: string) => void
+
+  // Graph folder filter
+  graphFolderId: string | null
+  setGraphFolderId: (folderId: string | null) => void
 
   retrievalHistory: Message[]
   setRetrievalHistory: (history: Message[]) => void
@@ -110,12 +117,15 @@ const useSettingsStoreBase = create<SettingsState>()(
 
       queryLabel: defaultQueryLabel,
 
+      graphFolderId: null,
+
       enableHealthCheck: true,
 
       apiKey: null,
 
       currentTab: 'documents',
       showFileName: false,
+      showFolderPanel: true,
       documentsPageSize: 10,
 
       retrievalHistory: [],
@@ -176,6 +186,8 @@ const useSettingsStoreBase = create<SettingsState>()(
 
       setBackendMaxGraphNodes: (maxNodes: number | null) => set({ backendMaxGraphNodes: maxNodes }),
 
+      setGraphFolderId: (folderId: string | null) => set({ graphFolderId: folderId }),
+
       setMinEdgeSize: (size: number) => set({ minEdgeSize: size }),
 
       setMaxEdgeSize: (size: number) => set({ maxEdgeSize: size }),
@@ -198,6 +210,7 @@ const useSettingsStoreBase = create<SettingsState>()(
       },
 
       setShowFileName: (show: boolean) => set({ showFileName: show }),
+      setShowFolderPanel: (show: boolean) => set({ showFolderPanel: show }),
       setShowLegend: (show: boolean) => set({ showLegend: show }),
       setDocumentsPageSize: (size: number) => set({ documentsPageSize: size }),
 
@@ -238,7 +251,7 @@ const useSettingsStoreBase = create<SettingsState>()(
     {
       name: 'settings-storage',
       storage: createJSONStorage(() => localStorage),
-      version: 19,
+      version: 20,
       migrate: (state: any, version: number) => {
         if (version < 2) {
           state.showEdgeLabel = false
@@ -340,6 +353,9 @@ const useSettingsStoreBase = create<SettingsState>()(
           if (state.querySettings) {
             delete state.querySettings.response_type
           }
+        }
+        if (version < 20) {
+          state.showFolderPanel = true
         }
         return state
       }

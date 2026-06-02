@@ -964,7 +964,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
             Returns the same format as get_by_ids method
         """
 
-<<<<<<< HEAD
+
     async def get_docs_by_folder_ids(
         self,
         folder_ids: list[str],
@@ -1057,7 +1057,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
                 break
             cur_page += 1
         return counts
-=======
+
     @abstractmethod
     async def get_doc_by_file_basename(
         self, basename: str
@@ -1089,7 +1089,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         Returns:
             (doc_id, doc_data) when a matching record exists, otherwise None.
         """
->>>>>>> 57f9116c8ebfc18cfce5b131e4a92821975ae537
+
 
 
 class StoragesStatus(str, Enum):

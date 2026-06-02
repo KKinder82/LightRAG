@@ -41,7 +41,7 @@ async def siliconcloud_embedding(
     model: str = "netease-youdao/bce-embedding-base_v1",
     base_url: str = "https://api.siliconflow.cn/v1/embeddings",
     max_token_size: int = 8192,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> np.ndarray:
     if api_key and not api_key.startswith("Bearer "):
         api_key = "Bearer " + api_key
