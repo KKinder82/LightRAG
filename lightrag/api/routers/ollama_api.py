@@ -429,7 +429,7 @@ class OllamaAPI:
                         media_type="application/x-ndjson",
                         headers={
                             "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
+                            "Connection": "keep-alive", 
                             "Content-Type": "application/x-ndjson",
                             "X-Accel-Buffering": "no",  # Ensure proper handling of streaming responses in Nginx proxy
                         },
