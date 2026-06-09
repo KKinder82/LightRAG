@@ -159,7 +159,6 @@ _ATTR_RE = re.compile(
     r'(\w+)\s*=\s*"((?:[^"\\]|\\.)*)"',
 )
 
-
 def _attrs_to_dict(attr_string: str) -> dict[str, str]:
     return {
         match.group(1).lower(): match.group(2)

@@ -161,7 +161,7 @@ document_canonical_key = normalize_document_file_path
 
 
 def has_known_document_source(source_key: str) -> bool:
-    # 是不是一个已知的文档来源，排除占位符来源（如 "unknown_source"）
+    # 来源不是己知识的占位符（如 "unknown_source"）
     return source_key not in PLACEHOLDER_DOCUMENT_SOURCES
 
 
@@ -352,6 +352,7 @@ def compute_file_content_hash(path_str: str) -> str | None:
 
 
 def configured_input_dir() -> Path:
+    # MARK: 配置的 输入目录
     input_dir = os.getenv("INPUT_DIR", "").strip()
     return Path(input_dir) if input_dir else Path.cwd() / "inputs"
 
@@ -451,6 +452,7 @@ def strip_lightrag_doc_prefix(content: str | None, parse_format: str | None) -> 
 
 
 def input_dir_path() -> Path:
+    # MARK: 返回输入目录
     return configured_input_dir()
 
 
@@ -462,6 +464,7 @@ def parsed_dir() -> Path:
 def parsed_artifact_dir_for(
     file_path: str, *, parent_hint: Path | str | None = None
 ) -> Path:
+    #MARK: 
     """Return the per-document sidecar directory for ``file_path``.
 
     ``file_path`` must already be canonical (run ``normalize_document_file_path``
@@ -473,7 +476,7 @@ def parsed_artifact_dir_for(
     finally a unix timestamp suffix.
     """
     if parent_hint is not None:
-        hint = Path(parent_hint)
+        hint = Path(parent_hint) # MARK: 
         # ``hint`` may already point at a ``__parsed__/`` dir (e.g. when the
         # caller re-archived a source); reuse it in place rather than nesting.
         root = hint if hint.name == PARSED_DIR_NAME else hint / PARSED_DIR_NAME
@@ -537,13 +540,8 @@ def resolve_sidecar_uri(uri: str | None) -> Path | None:
 
 
 def sidecar_blocks_path(uri: str | None) -> str | None:
-    # 从侧车 URI 定位第一个 ``*.blocks.jsonl`` 文件。
+    # 从 URI 定位一个 ``*.blocks.jsonl`` 文件。
     # 返回绝对路径字符串，或当 URI 无法在本地解析或目录中没有 blocks 文件时返回 None。
-    """Locate the first ``*.blocks.jsonl`` file inside a sidecar URI.
-
-    Returns the absolute path as a string, or None when the URI cannot be
-    resolved locally or the directory holds no blocks file.
-    """
     d = resolve_sidecar_uri(uri)
     if d is None or not d.is_dir():
         # 如果 d 不是一个有效的目录（包括 URI 无法解析或解析后路径不是目录的情况），则返回 None
@@ -611,13 +609,8 @@ async def archive_source_after_full_docs_sync(source_path: str) -> str | None:
 
 
 async def load_lightrag_document_content(sidecar_uri: str) -> tuple[str, str]:
-    """Load LightRAG Document blocks and return ``(merged_text, blocks_path)``.
-
-    ``sidecar_uri`` is a sidecar location URI (see ``sidecar_uri_for``); this
-    locates the ``*.blocks.jsonl`` file inside it, reads the content lines
-    (skipping the meta header at index 0 and any non-content entries), and
-    returns the merged body plus the absolute blocks path.
-    """
+    #MARK: 加载 LightRAG Document 内容，
+    # 返回合并文本和 blocks 文件路径
     resolved = sidecar_blocks_path(sidecar_uri)
     if resolved is None:
         raise FileNotFoundError(
@@ -633,6 +626,7 @@ async def load_lightrag_document_content(sidecar_uri: str) -> tuple[str, str]:
                 continue
             obj = json.loads(text)
             if i == 0:
+                # WHY: 为什么要跳过第一行.
                 continue
             if obj.get("type") != "content":
                 continue

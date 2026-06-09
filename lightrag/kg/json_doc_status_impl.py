@@ -123,6 +123,9 @@ class JsonDocStatusStorage(DocStatusStorage):
                     )
 
     async def filter_keys(self, keys: set[str]) -> set[str]:
+        #MARK: 过滤已经处理过的 keys，返回需要处理的 keys
+        #  keys: 所有的,  self.keys: 已经处理过的. 
+        #  返回: 没有处理过的. 
         """Return keys that should be processed (not in storage or not successfully processed)"""
         if self._storage_lock is None:
             raise StorageNotInitializedError("JsonDocStatusStorage")
@@ -221,6 +224,7 @@ class JsonDocStatusStorage(DocStatusStorage):
                         continue
         return result
 
+    #MARK: 回调函数，写回磁盘并清理标志。
     async def index_done_callback(self) -> None:
         """Flush dirty shared memory to disk and clear all dirty flags.
 
@@ -298,6 +302,9 @@ class JsonDocStatusStorage(DocStatusStorage):
             self._data.update(data)
             await set_all_update_flags(self.namespace, workspace=self.workspace)
 
+        # IMPO: 立即持久化。
+        # 调用 index_done_callback 来将内存中的更改写回磁盘，并清除更新标志。
+        # 这确保了文档状态的更改在此方法返回之前被保存，即使在高并发环境中也能保持数据一致性和可靠性。 
         await self.index_done_callback()
 
     async def is_empty(self) -> bool:

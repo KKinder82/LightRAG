@@ -85,7 +85,7 @@ class ProcessOptions:
     tables: bool = False
     equations: bool = False
     skip_kg: bool = False
-    chunking: ProcessChunkingOption = PROCESS_OPTION_CHUNK_FIXED
+    chunking: ProcessChunkingOption = PROCESS_OPTION_CHUNK_FIXED #MARK: 分块策略，默认固定分块
 
     @property
     def chunking_explicit(self) -> bool:
@@ -99,6 +99,7 @@ class ProcessOptions:
         dispatch via the new file-chunker contract or to honor the
         legacy externally-supplied :attr:`LightRAG.chunking_func`.
         """
+        #MARK: explicit 明确的. 
         return any(c in PROCESS_OPTION_CHUNK_CHARS for c in self.raw)
 
 
@@ -195,6 +196,7 @@ _CHUNK_STRATEGY_KEYS: dict[str, str] = {
 
 
 def chunk_strategy_key(process_options: Any) -> str:
+    #MARK: 分区策略键
     """Return the ``chunk_options`` sub-dict key for ``process_options``.
 
     Accepts a raw options string or a :class:`ProcessOptions` value.
@@ -246,6 +248,7 @@ def slim_chunk_options(
         result["chunk_token_size"] = deepcopy(src["chunk_token_size"])
     result[key] = deepcopy(dict(src.get(key) or {}))
     if key == "paragraph_semantic" and "chunk_token_size" not in result[key]:
+        #MARK: 段落语义策略的 chunk_token_size 回填
         p_size_raw = os.getenv("CHUNK_P_SIZE")
         result[key]["chunk_token_size"] = (
             int(p_size_raw) if p_size_raw is not None else DEFAULT_CHUNK_P_SIZE
@@ -392,6 +395,7 @@ def resolve_chunk_options(
     split_by_character: str | None = None,
     split_by_character_only: bool = False,
 ) -> dict[str, Any]:
+    #MARK: 解析分块选项
     """Build a per-document slim ``chunk_options`` snapshot.
 
     Reads the chunker config from ``addon_params['chunker']``, falling
@@ -898,7 +902,7 @@ def resolve_stored_document_parser_engine(
     file_path: str | Path,
     content_data: dict[str, Any] | None,
 ) -> str:
-    """Resolve parser engine for a full_docs row during pipeline processing."""
+    """Resolve parser engine for a full_docs row during pipeline processing. """
     if content_data:
         doc_format = content_data.get("parse_format", FULL_DOCS_FORMAT_RAW)
         if doc_format == FULL_DOCS_FORMAT_LIGHTRAG and content_data.get(

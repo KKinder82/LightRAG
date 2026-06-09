@@ -1357,8 +1357,10 @@ async def get_update_flag(namespace: str, workspace: str | None = None):
             )
 
         if _is_multiprocess and _manager is not None:
+            #MARK: 多线程 多进程共享变量
             new_update_flag = _manager.Value("b", False)
         else:
+            # MARK: mutable 可变的
             # Create a simple mutable object to store boolean value for compatibility with mutiprocess
             class MutableBoolean:
                 def __init__(self, initial_value=False):
@@ -1370,6 +1372,7 @@ async def get_update_flag(namespace: str, workspace: str | None = None):
         return new_update_flag
 
 
+#GROUP: 更新所有标志(更新相关标志)
 async def set_all_update_flags(namespace: str, workspace: str | None = None):
     """Set all update flag of namespace indicating all workers need to reload data from files"""
     global _update_flags
@@ -1384,7 +1387,7 @@ async def set_all_update_flags(namespace: str, workspace: str | None = None):
         # Update flags for both modes
         for i in range(len(_update_flags[final_namespace])):
             # 为什么有这么多的状态。
-            _update_flags[final_namespace][i].value = True
+            _update_flags[final_namespace][i].value = True #MARK: Set flags for both modes
 
 
 async def clear_all_update_flags(namespace: str, workspace: str | None = None):
@@ -1400,7 +1403,7 @@ async def clear_all_update_flags(namespace: str, workspace: str | None = None):
             raise ValueError(f"Namespace {final_namespace} not found in update flags")
         # Update flags for both modes
         for i in range(len(_update_flags[final_namespace])):
-            _update_flags[final_namespace][i].value = False
+            _update_flags[final_namespace][i].value = False  #MARK: CLear flags for both modes
 
 
 async def get_all_update_flags_status(workspace: str | None = None) -> Dict[str, list]:

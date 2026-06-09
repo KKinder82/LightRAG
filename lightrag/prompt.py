@@ -848,6 +848,7 @@ def resolve_entity_extraction_prompt_profile(
     addon_params: Mapping[str, Any] | None,
     use_json: bool,
 ) -> EntityExtractionPromptProfile:
+    # MARK: 解析实体抽取提示词配置文件并合并配置
     """Resolve and merge the configured entity extraction prompt profile."""
 
     default_profile = get_default_entity_extraction_prompt_profile()

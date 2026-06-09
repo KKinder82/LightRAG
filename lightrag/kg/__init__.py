@@ -1,3 +1,4 @@
+# MARK: 知识图谱相关
 STORAGE_IMPLEMENTATIONS = {
     "KV_STORAGE": {
         "implementations": [
@@ -48,9 +49,9 @@ STORAGE_IMPLEMENTATIONS = {
 # Storage implementation environment variable without default value
 STORAGE_ENV_REQUIREMENTS: dict[str, list[str]] = {
     # KV Storage Implementations
-    "JsonKVStorage": [],
+    "JsonKVStorage": [], # MARK: 存储实现
     "MongoKVStorage": [
-        "MONGO_URI",
+        "MONGO_URI",  # MARK: 存储实现所需环境变量
         "MONGO_DATABASE",
     ],
     "RedisKVStorage": ["REDIS_URI"],

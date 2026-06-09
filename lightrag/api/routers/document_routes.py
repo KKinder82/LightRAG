@@ -1211,6 +1211,8 @@ async def get_existing_doc_by_file_path_candidates(
     return existing_doc_data
 
 
+#GROUP: 保留一个待处理的上传/插入槽位（pending enqueue slot）
+# 以协调扫描任务和上传/插入请求之间的竞争，防止在扫描分类阶段或执行破坏性操作时接受新的上传/插入请求。
 async def _reserve_enqueue_slot(rag: LightRAG) -> bool:
     # 检查是否允许，并预占一个待处理的上传/插入槽位（pending enqueue slot）。
     # 如果正在扫描分类或执行破坏性操作，则拒绝新的上传/插入请求，返回HTTP 409。
@@ -1291,9 +1293,12 @@ async def _reserve_enqueue_slot(rag: LightRAG) -> bool:
                     "new work."
                 ),
             )
+        #IMPO: 增加待处理数量.
         pipeline_status["pending_enqueues"] = (
-            pipeline_status.get("pending_enqueues", 0) + 1
+            # 预占一个待处理的上传/插入槽位，增加计数器以通知扫描任务有新的待处理上传/插入
+            pipeline_status.get("pending_enqueues", 0) + 1 
         )
+    #RET:
     return True
 
 
@@ -1877,7 +1882,7 @@ def _extract_xlsx(file_bytes: bytes) -> str:
     content_parts.append(sheet_separator)
     return "\n".join(content_parts)
 
-
+#TODO: 向队伍中增加一个文件。
 async def pipeline_enqueue_file(
     rag: LightRAG,
     file_path: Path,
@@ -1888,6 +1893,7 @@ async def pipeline_enqueue_file(
     from_scan: bool = False,
 
 ) -> tuple[bool, str]:
+    # MARK: 增加一个文件到处理队列
     """Add a file to the queue for processing
 
     Args:
@@ -1907,18 +1913,21 @@ async def pipeline_enqueue_file(
         track_id = generate_track_id("unknown")
 
     try:
+        #MARK: 初始化一些变量
         content = ""
         ext = file_path.suffix.lower()
         file_size = 0
 
-        # Get file size for error reporting
+        # MARK: 获取文件大小
         try:
             stat = await asyncio.to_thread(file_path.stat)
             file_size = stat.st_size
         except Exception:
             file_size = 0
 
+        # MARK: 获得文件处理指令
         try:
+            # 解板文件处理指令。
             extraction_engine, process_options = resolve_file_parser_directives(
                 file_path
             )
@@ -1935,11 +1944,12 @@ async def pipeline_enqueue_file(
             logger.error(
                 f"[File Extraction]Invalid filename hint in {file_path.name}: {e}"
             )
+            #RET:
             return False, track_id
 
-        api_process_options = process_options or PROCESS_OPTION_CHUNK_FIXED
+        api_process_options = process_options or PROCESS_OPTION_CHUNK_FIXED # 确认一个默认的处理选项
         if extraction_engine != PARSER_ENGINE_LEGACY:
-            # 不是传统解析器，直接进入排队流程，不进行预处理
+            # MARK: 不是传统解析器，直接进入排队流程，不进行预处理
             try:
                 enqueue_kwargs = {
                     "file_paths": str(file_path),
@@ -1949,20 +1959,24 @@ async def pipeline_enqueue_file(
                     "process_options": api_process_options,
                     "from_scan": from_scan,
                 }
+                # TODO: 一会儿处理。
                 enqueue_result = await rag.apipeline_enqueue_documents(
                     "", **enqueue_kwargs
                 )
                 if enqueue_result is None:
+                    # MARK: 排队失败，可能是重复文件。将文件移到已解析目录以避免后续处理干扰，并记录错误。
                     try:
                         await move_file_to_parsed_dir(file_path)
                     except Exception as move_error:
                         logger.error(
                             f"Failed to move duplicate file {file_path.name} to {PARSED_DIR_NAME} directory: {move_error}"
                         )
+                    #RET:
                     return False, track_id
                 logger.info(
                     f"[File Extraction]Deferred {file_path.name} to {extraction_engine} parser"
                 )
+                #RET: 处理成功，返回True和track_id
                 return True, track_id
             except Exception as e:
                 error_files = [
@@ -1977,14 +1991,17 @@ async def pipeline_enqueue_file(
                 logger.error(
                     f"[File Extraction]Error enqueuing {file_path.name} for {extraction_engine}: {str(e)}"
                 )
+                #RET: 排队失败，返回False和track_id
                 return False, track_id
 
-        # 传统解析器需要预处理文件内容（如解密PDF、提取DOCX文本等），所以继续往下走内容提
-        file = None
+        # GROUP: 传统解析器需要预处理文件内容（如解密PDF、提取DOCX文本等），所以继续往下走内容提
+        file = None  # 存文件内容.
+        #MARK: 读文件
         try:
             async with aiofiles.open(file_path, "rb") as f:
                 file = await f.read()
         except PermissionError as e:
+            # 权限错误，无法读取文件。记录错误并返回失败。
             error_files = [
                 {
                     "file_path": str(file_path.name),
@@ -1999,6 +2016,7 @@ async def pipeline_enqueue_file(
             )
             return False, track_id
         except FileNotFoundError as e:
+            # 文件未找到，可能被误删或移动了。记录错误并返回失败。
             error_files = [
                 {
                     "file_path": str(file_path.name),
@@ -2011,6 +2029,7 @@ async def pipeline_enqueue_file(
             logger.error(f"[File Extraction]File not found: {file_path.name}")
             return False, track_id
         except Exception as e:
+            # 其他读取错误（磁盘故障、网络问题等）。记录错误并返回失败。
             error_files = [
                 {
                     "file_path": str(file_path.name),
@@ -2024,8 +2043,8 @@ async def pipeline_enqueue_file(
                 f"[File Extraction]Error reading file {file_path.name}: {str(e)}"
             )
             return False, track_id
-
         # Process based on file type
+        # MARK: 根据文件类型处理
         try:
             match ext:
                 case (
@@ -2066,6 +2085,7 @@ async def pipeline_enqueue_file(
                     | ".scss"
                     | ".less"
                 ):
+                    # MARK: 纯文本文件，直接解码内容
                     try:
                         # Try to decode as UTF-8 (offloaded to thread to avoid blocking the event loop)
                         content = await asyncio.to_thread(file.decode, "utf-8")
@@ -2086,6 +2106,7 @@ async def pipeline_enqueue_file(
                             logger.error(
                                 f"[File Extraction]Empty content in file: {file_path.name}"
                             )
+                            #RET:
                             return False, track_id
 
                         # Check if content looks like binary data string representation
@@ -2104,9 +2125,11 @@ async def pipeline_enqueue_file(
                             logger.error(
                                 f"[File Extraction]File {file_path.name} appears to contain binary data representation instead of text"
                             )
+                            #RET:
                             return False, track_id
 
                     except UnicodeDecodeError as e:
+                        # UTF-8 解码错误。
                         error_files = [
                             {
                                 "file_path": str(file_path.name),
@@ -2121,9 +2144,11 @@ async def pipeline_enqueue_file(
                         logger.error(
                             f"[File Extraction]File {file_path.name} is not valid UTF-8 encoded text. Please convert it to UTF-8 before processing."
                         )
+                        #RET:
                         return False, track_id
 
                 case ".pdf":
+                    #MARK: PDF文件，使用pypdf提取文本（支持加密PDF）
                     try:
                         content = await asyncio.to_thread(
                             _extract_pdf_pypdf,
@@ -2145,9 +2170,11 @@ async def pipeline_enqueue_file(
                         logger.error(
                             f"[File Extraction]Error processing PDF {file_path.name}: {str(e)}"
                         )
+                        #RET:
                         return False, track_id
 
                 case ".docx":
+                    #MARK: DOCX文件，使用python-docx提取文本和表格内容（表格转换为制表符分隔的文本）
                     try:
                         content = await asyncio.to_thread(_extract_docx, file)
                     except Exception as e:
@@ -2165,9 +2192,11 @@ async def pipeline_enqueue_file(
                         logger.error(
                             f"[File Extraction]Error processing DOCX {file_path.name}: {str(e)}"
                         )
+                        #RET:
                         return False, track_id
 
                 case ".pptx":
+                    #MARK: PPTX文件，使用python-pptx提取文本内容
                     try:
                         content = await asyncio.to_thread(_extract_pptx, file)
                     except Exception as e:
@@ -2185,9 +2214,11 @@ async def pipeline_enqueue_file(
                         logger.error(
                             f"[File Extraction]Error processing PPTX {file_path.name}: {str(e)}"
                         )
+                        #RET:
                         return False, track_id
 
                 case ".xlsx":
+                    #MARK: XLSX文件，使用openpyxl提取文本内容，表格转换为制表符分隔的文本，并且每个sheet之间用分隔线分开
                     try:
                         content = await asyncio.to_thread(_extract_xlsx, file)
                     except Exception as e:
@@ -2208,6 +2239,7 @@ async def pipeline_enqueue_file(
                         return False, track_id
 
                 case _:
+                    #MARK: 不支持的文件类型。记录错误并返回失败。
                     error_files = [
                         {
                             "file_path": str(file_path.name),
@@ -2220,6 +2252,7 @@ async def pipeline_enqueue_file(
                     logger.error(
                         f"[File Extraction]Unsupported file type: {file_path.name} (extension {ext})"
                     )
+                    #RET:
                     return False, track_id
 
         except Exception as e:
@@ -2239,6 +2272,7 @@ async def pipeline_enqueue_file(
 
         # Insert into the RAG queue
         if content:
+            #MARK: 有内容，处理内容。
             # Check if content contains only whitespace characters
             if not content.strip():
                 error_files = [
@@ -2253,6 +2287,7 @@ async def pipeline_enqueue_file(
                 logger.warning(
                     f"[File Extraction]File contains only whitespace characters: {file_path.name}"
                 )
+                #RET:
                 return False, track_id
 
             try:
@@ -2263,16 +2298,20 @@ async def pipeline_enqueue_file(
                     "process_options": api_process_options,
                     "from_scan": from_scan,
                 }
+                #MARK: 内容处理完成，进入排队流程。
+                #IMPO:
                 enqueue_result = await rag.apipeline_enqueue_documents(
                     content, **enqueue_kwargs
                 )
                 if enqueue_result is None:
+                    # 排队失败，可能是重复文件。将文件移到已解析目录以避免后续处理干扰，并记录错误。
                     try:
                         await move_file_to_parsed_dir(file_path)
                     except Exception as move_error:
                         logger.error(
                             f"Failed to move duplicate file {file_path.name} to {PARSED_DIR_NAME} directory: {move_error}"
                         )
+                    #RET:
                     return False, track_id
 
                 # Tag document with folder_id if provided
@@ -2285,14 +2324,16 @@ async def pipeline_enqueue_file(
                     existing = await rag.doc_status.get_by_id(doc_id)
                     if existing:
                         meta = existing.get("metadata") or {}
-                        meta["folder_id"] = folder_id
+                        meta["folder_id"] = folder_id  # 在元数据中，记录所属文件夹
                         existing["metadata"] = meta
+                        #IMPO: 保存
                         await rag.doc_status.upsert({doc_id: existing})
 
                 logger.info(
                     f"Successfully extracted and enqueued file: {file_path.name}"
                 )
 
+                # MARK: 收尾处理
                 # Move file to __parsed__ directory after enqueuing (LR2-PRD: parsed output dir)
                 try:
                     await move_file_to_parsed_dir(file_path)
@@ -2302,6 +2343,7 @@ async def pipeline_enqueue_file(
                     )
                     # Don't affect the main function's success status
 
+                #RET: 成功，返回成功状态和 track_id。
                 return True, track_id
 
             except Exception as e:
@@ -2315,8 +2357,10 @@ async def pipeline_enqueue_file(
                 ]
                 await rag.apipeline_enqueue_error_documents(error_files, track_id)
                 logger.error(f"Error enqueueing document {file_path.name}: {str(e)}")
+                #RET:
                 return False, track_id
         else:
+            #MARK:没内容，记录错误并返回失败。
             error_files = [
                 {
                     "file_path": str(file_path.name),
@@ -2327,6 +2371,7 @@ async def pipeline_enqueue_file(
             ]
             await rag.apipeline_enqueue_error_documents(error_files, track_id)
             logger.error(f"No content extracted from file: {file_path.name}")
+            #RET:
             return False, track_id
 
     except Exception as e:
@@ -2347,6 +2392,7 @@ async def pipeline_enqueue_file(
         await rag.apipeline_enqueue_error_documents(error_files, track_id)
         logger.error(f"Enqueuing file {file_path.name} error: {str(e)}")
         logger.error(traceback.format_exc())
+        #RET:
         return False, track_id
     finally:
         if file_path.name.startswith(temp_prefix):
@@ -2356,12 +2402,14 @@ async def pipeline_enqueue_file(
                 logger.error(f"Error deleting file {file_path}: {str(e)}")
 
 
+#TODO：任务处理
 async def pipeline_index_file(
     rag: LightRAG,
     file_path: Path,
     track_id: str | None = None,
     folder_id: Optional[str] = None,
 ):
+    # 索引文件（包含 track_id 和 folder_id）
     """Index a file with track_id
 
     Args:
@@ -2372,11 +2420,13 @@ async def pipeline_index_file(
     """
     try:
 
+        # TODO: 索引单个文件，成功后处理队列。
         success, returned_track_id = await pipeline_enqueue_file(
             rag, file_path, track_id, folder_id=folder_id
         )
 
         if success:
+            #TODO: 文件索引成功，处理队列。
             await rag.apipeline_process_enqueue_documents()
 
     except Exception as e:
@@ -2421,10 +2471,12 @@ async def pipeline_index_files(
                 from_scan=from_scan,
             )
             if success:
+                # MARK: 只要有一个文件成功入队，就标记为已入队，最后统一触发处理队列。这样可以避免单个文件入队失败导致后续文件不被处理。
                 enqueued = True
 
         # Process the queue only if at least one file was successfully enqueued
         if enqueued:
+            # MARK: 文件索引成功，处理队列。
             await rag.apipeline_process_enqueue_documents()
     except Exception as e:
         logger.error(f"Error indexing files: {str(e)}")
@@ -3069,7 +3121,7 @@ async def background_delete_documents(
             except Exception as e:
                 logger.error(f"Error processing pending documents after deletion: {e}")
 
-
+# TODO: 生成路由入口
 def create_document_routes(
     rag: LightRAG,
     doc_manager: DocumentManager,
@@ -3208,6 +3260,7 @@ def create_document_routes(
             track_id=track_id,
         )
 
+    # TODO: 上传接口
     @router.post("/upload"
                  , response_model=InsertResponse
                  , dependencies=[Depends(combined_auth)]
@@ -3233,6 +3286,7 @@ def create_document_routes(
             slot_reserved = await _reserve_enqueue_slot(rag)
 
             # Sanitize filename to prevent Path Traversal attacks
+            # 从上传的文件名中提取安全的文件名，防止路径遍历攻击
             safe_filename = sanitize_filename(file.filename, doc_manager.input_dir)
 
             if not doc_manager.is_supported_file(safe_filename):
@@ -3290,10 +3344,12 @@ def create_document_routes(
             if file_path.exists():
                 existing_input_file: Path | None = file_path
             else:
+                # 根据 位置候选列表检查是否存在同名文件（不同的路径但同样的规范化名称），以避免迭代整个输入目录。
                 existing_input_file = find_existing_file_by_file_path(
                     doc_manager.input_dir, canonical_filename
                 )
             if existing_input_file:
+                # 文件存在于输入目录中，但之前的检查未发现（可能是因为规范化名称匹配但路径不同），拒绝上传以避免覆盖。
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -3309,6 +3365,8 @@ def create_document_routes(
             needs_cleanup = False
 
             async with aiofiles.open(file_path, "wb") as out_file:
+                # 保存文件的同时检查大小限制，以防止过大的文件被完全写入磁盘。
+                # 即使某些环境的 UploadFile 不提供 size 属性，我们也能在写入过程中 enforce 大小限制。
                 while True:
                     # Read chunk from upload stream
                     chunk = await file.read(chunk_size)
@@ -3354,18 +3412,22 @@ def create_document_routes(
             # collapses to a ``request_pending=True`` nudge and returns,
             # so concurrent uploads/inserts cooperate via the running
             # loop's request_pending mechanism.
+            #IMPO: 任务处理：将文件加入索引并触发处理流程，然后释放预留的插槽。
             async def _indexing_task():
                 try:
+                    # TODO: 任务处理
                     await pipeline_index_file(rag, file_path, track_id, folder_id=folder_id)
                 finally:
+                    # 最后释放预留的插槽，无论任务成功与否都要确保释放，以避免死锁。
                     await _release_enqueue_slot(rag)
 
+            # TODO: 增加任务。
             background_tasks.add_task(_indexing_task)
             # Ownership of the slot transferred to the bg task — the
             # finally block below must NOT release it again.
             slot_reserved = False
 
-
+            #RET:
             return InsertResponse(
                 status="success",
                 message=f"File '{safe_filename}' uploaded successfully. Processing will continue in background.",
@@ -3384,6 +3446,7 @@ def create_document_routes(
             # (e.g. early validation rejection or streaming-write
             # failure), release here.  No drain coordination needed —
             # any sibling bg task triggers its own processing pass.
+            #MARK: 结束
             if slot_reserved:
                 await _release_enqueue_slot(rag)
 

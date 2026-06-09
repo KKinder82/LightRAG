@@ -162,13 +162,13 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
     # Directory
     # ---
-
+    #TODO: 工作目录
     working_dir: str = field(default="./rag_storage")
     """Directory where cache and temporary files are stored."""
 
+    # MARK: 数据库(类型)
     # Storage
     # ---
-
     kv_storage: str = field(default="JsonKVStorage")
     """Storage backend for key-value data."""
 
@@ -181,7 +181,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     doc_status_storage: str = field(default="JsonDocStatusStorage")
     """Storage type for tracking document processing statuses."""
 
-    # Workspace
+    # MARK:Workspace
     # ---
 
     workspace: str = field(default_factory=lambda: os.getenv("WORKSPACE", ""))
@@ -261,6 +261,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         )
     )
 
+    #MARK: Text chunking
     # Text chunking
     # ---
 
@@ -597,9 +598,9 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     _addon_params_dirty: bool = field(default=True, init=False, repr=False)
 
     _entity_extraction_prompt_profile: dict[str, Any] = field(
-        default_factory=get_default_entity_extraction_prompt_profile,
-        init=False,
-        repr=False,
+        default_factory=get_default_entity_extraction_prompt_profile, # type: ignore  
+        init=False, # init 函数不接受这个参数，必须通过 addon_params 传入
+        repr=False, # 不包含在 repr 输出中
     )
     _cached_entity_extraction_use_json: bool | None = field(
         default=None,
@@ -616,6 +617,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     # ---
 
     # TODO: Deprecated (LightRAG will never initialize storage automatically on creation，and finalize should be call before destroying)
+    # MARK: 存储管理(过期的)
     auto_manage_storages_states: bool = field(default=False)
     """If True, lightrag will automatically calls initialize_storages and finalize_storages at the appropriate times."""
 
@@ -635,15 +637,18 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     #     # 初始化共享数据
 
     def _mark_addon_params_dirty(self) -> None:
+        # MARK: 标记 addon_params 已修改，下一次构建全局配置时需要刷新缓存
         self._addon_params_dirty = True
 
     def _replace_addon_params(
         self, addon_params: Mapping[str, Any] | None, *, mark_dirty: bool
     ) -> None:
+        # MARK: 创建一个新的
         wrapped = ObservableAddonParams(
             normalize_addon_params(addon_params),
             on_change=self._mark_addon_params_dirty,
         )
+        #MARK: 配置属性
         self._addon_params = wrapped
         if mark_dirty:
             self._mark_addon_params_dirty()
@@ -664,6 +669,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         self._apply_chunk_size_overlay()
 
     def _apply_chunk_size_overlay(self) -> None:
+        # MARK: Ensure 配置 CHUNKER
         """Reconcile chunk-size config across all four configuration tiers.
 
         Specificity-ordered precedence (high → low) per slot:
@@ -704,6 +710,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         # Top-level chunk_token_size — no strategy-specific env exists,
         # so the chain is: addon_params > legacy ctor > CHUNK_SIZE env.
+        # MARK: Ensure 配置 chunk_token_size
         if "chunk_token_size" not in chunker_cfg:
             if self.chunk_token_size is not None:
                 chunker_cfg["chunk_token_size"] = self.chunk_token_size
@@ -722,6 +729,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             "recursive_character",
             "paragraph_semantic",
         ):
+            # MARK: 配置 不同的策略
             sub = chunker_cfg.get(strategy_key)
             if not isinstance(sub, dict):
                 sub = {}
@@ -729,47 +737,22 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             if "chunk_overlap_token_size" not in sub:
                 sub["chunk_overlap_token_size"] = legacy_overlap_default
 
-        # P-specific chunk_token_size backfill — P does NOT inherit the
-        # top-level chunk_token_size (CHUNK_SIZE / legacy ctor) when
-        # nothing more specific was set; paragraph-semantic merging
-        # needs more headroom than the global default to keep related
-        # paragraphs together.  ``default_chunker_config`` already
-        # pre-fills this slot for the default-built chunker dict, but
-        # when the caller hands us a partial ``addon_params['chunker']``
-        # that lacks the slot (e.g. ``{"paragraph_semantic": {}}``)
-        # ``normalize_addon_params`` does not re-run the defaults
-        # builder — so this overlay is the last guard that ensures the
-        # slot is always populated.  Precedence (high → low):
-        # explicit ``addon_params`` > ``CHUNK_P_SIZE`` env >
-        # ``DEFAULT_CHUNK_P_SIZE``.  ``setdefault`` preserves any
-        # explicit value the caller did provide; the env read here
-        # mirrors ``default_chunker_config`` so partial-addon-params
-        # callers still pick up env overrides.
         p_size_raw = os.getenv("CHUNK_P_SIZE")
         chunker_cfg["paragraph_semantic"].setdefault(
             "chunk_token_size",
             int(p_size_raw) if p_size_raw is not None else DEFAULT_CHUNK_P_SIZE,
         )
 
-        # Per-strategy F/R/V chunk_token_size from strategy env
-        # (CHUNK_F_SIZE / CHUNK_R_SIZE / CHUNK_V_SIZE).  Same rationale as the
-        # P backfill above: ``default_chunker_config`` seeds these when it
-        # builds the chunker dict from scratch, but a partial
-        # ``addon_params['chunker']`` skips that builder
-        # (``normalize_addon_params`` only defaults the whole ``chunker`` key
-        # when it is absent), so this overlay is the last guard.  Unlike P,
-        # the slot is filled ONLY when the env is actually set — leaving it
-        # absent otherwise so F/R/V inherit the top-level ``chunk_token_size``
-        # at consumption time.  ``setdefault`` preserves an explicit
-        # caller-supplied value (tier 1 wins over the env tier 2).
         for strategy_key, size_env in (
-            ("fixed_token", "CHUNK_F_SIZE"),
+            ("fixed_token", "CHUNK_F_SIZE"), 
             ("recursive_character", "CHUNK_R_SIZE"),
             ("semantic_vector", "CHUNK_V_SIZE"),
         ):
             size_raw = os.getenv(size_env)
             if size_raw is None:
+                #MARK: 如果 没有设置 对应的Size 环境变量，就继续
                 continue
+            #MARK: 如果设置了对应的Size 环境变量，就要保证 strategy_key 存在，并且是个 dict，然后设置 chunk_token_size
             sub = chunker_cfg.get(strategy_key)
             if not isinstance(sub, dict):
                 sub = {}
@@ -780,12 +763,14 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # Overlap mirrors the F-strategy resolved value, matching the
         # F-flavoured legacy ``self.chunk_overlap_token_size`` semantics
         # used by the legacy 6-arg ``chunking_func`` path.
+        # MARK: 配置属性
         self.chunk_token_size = chunker_cfg["chunk_token_size"]
         self.chunk_overlap_token_size = chunker_cfg["fixed_token"][
             "chunk_overlap_token_size"
         ]
 
     def _refresh_addon_params_cache(self) -> None:
+        # MARK: 刷新 addon_params 缓冲.
         summary_language = self._addon_params.get("language", DEFAULT_SUMMARY_LANGUAGE)
         if not isinstance(summary_language, str) or not summary_language.strip():
             summary_language = DEFAULT_SUMMARY_LANGUAGE
@@ -796,7 +781,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             self.entity_extraction_use_json,
         )
         self._entity_extraction_prompt_profile = (
-            validate_entity_extraction_prompt_profile_for_mode(
+            validate_entity_extraction_prompt_profile_for_mode( # type: ignore
                 resolved_prompt_profile,
                 self.entity_extraction_use_json,
                 self._addon_params.get("entity_type_prompt_file"),
@@ -807,14 +792,14 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
     def _ensure_addon_params_cache(self) -> None:
         if (
-            not self._addon_params_dirty
-            and self._cached_entity_extraction_use_json
-            == self.entity_extraction_use_json
+            not self._addon_params_dirty # MARK: 没有修改
+            and self._cached_entity_extraction_use_json == self.entity_extraction_use_json # MARK: 没有修改
         ):
             return
         self._refresh_addon_params_cache()
 
     def _build_global_config(self) -> dict[str, Any]:
+        # MARK: 构建全局配置
         self._ensure_addon_params_cache()
         global_config = asdict(self)
         global_config.pop("_addon_params", None)
@@ -825,7 +810,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # because they live in the private _role_llm_states map). The first
         # _build_global_config() call from __post_init__ runs before the role
         # state is built, so fall back to an empty dict in that case.
-        states = getattr(self, "_role_llm_states", None) or {}
+        states = getattr(self, "_role_llm_states", None) or {} # MARK: 角色状态
         global_config["role_llm_funcs"] = {
             spec.name: states[spec.name].wrapped if spec.name in states else None
             for spec in ROLES
@@ -839,8 +824,11 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         return global_config
 
     def _build_role_llm_cache_identity(
-        self, role: str, state: _RoleLLMState | None
+        self, 
+        role: str, 
+        state: _RoleLLMState | None
     ) -> dict[str, Any]:
+        # MARK: 构建角色 LLM 缓存身份
         # `state` is None during the first _build_global_config() call from
         # __post_init__ — role builders have not run yet, so metadata is empty
         # and we fall back to self.llm_model_name. Once roles are initialized
@@ -848,9 +836,9 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         metadata = state.metadata if state is not None else {}
         return {
             "role": role,
-            "binding": metadata.get("binding"),
-            "model": metadata.get("model") or self.llm_model_name,
-            "host": metadata.get("host"),
+            "binding": metadata.get("binding"), # MARK: 供应商信息
+            "model": metadata.get("model") or self.llm_model_name, # MARK: 模型信息
+            "host": metadata.get("host"), # MARK: 主机信息（如 Ollama server URL）
         }
 
     def __post_init__(self, addon_params: dict[str, Any] | None):
@@ -861,6 +849,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         # Fail fast if deprecated ENTITY_TYPES env var is set
         if os.getenv("ENTITY_TYPES") is not None:
+            # MARK: 已废弃的环境变量检查
             raise SystemExit(
                 "ERROR: ENTITY_TYPES environment variable is no longer supported. "
                 "Please customize entity type guidance through the prompt template instead. "
@@ -900,6 +889,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         # Verify storage implementation compatibility and environment variables
         storage_configs = [
+            # MARK: 存储类型, 存储实现
             ("KV_STORAGE", self.kv_storage),
             ("VECTOR_STORAGE", self.vector_storage),
             ("GRAPH_STORAGE", self.graph_storage),
@@ -907,6 +897,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         ]
 
         for storage_type, storage_name in storage_configs:
+            # MARK: 验证存储实现的兼容性和环境变量  
             # Verify storage implementation compatibility
             verify_storage_implementation(storage_type, storage_name)
             # Check environment variables
@@ -921,6 +912,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # Init Tokenizer
         # Post-initialization hook to handle backward compatabile tokenizer initialization based on provided parameters
         if self.tokenizer is None:
+            # MARK: 初始化 Tokenizer
             if self.tiktoken_model_name:
                 self.tokenizer = TiktokenTokenizer(self.tiktoken_model_name)
             else:
@@ -1651,6 +1643,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             str: tracking ID for monitoring processing status
         """
         # Generate track_id if not provided
+        # MARK: 保证 track_id 是唯一的
         if track_id is None:
             track_id = generate_track_id("insert")
 
@@ -1661,11 +1654,13 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # carrier; runtime split args are an ainsert-only concern.
         from lightrag.parser.routing import resolve_chunk_options
 
+        #MARK: 解析分块选项
         chunk_opts = resolve_chunk_options(
             self.addon_params,
             split_by_character=split_by_character,
             split_by_character_only=split_by_character_only,
         )
+        # MARK: 入队文档进行处理，传入chunk_options以确保F-strategy的split_by_character等运行时参数被正确应用于每个文档
         await self.apipeline_enqueue_documents(
             input,
             ids,
@@ -1673,6 +1668,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             track_id,
             chunk_options=chunk_opts,
         )
+        # MARK: 处理入队的文档，直到完成整个入库流程（包括抽取实体关系等后续步骤）
         await self.apipeline_process_enqueue_documents()
 
         return track_id

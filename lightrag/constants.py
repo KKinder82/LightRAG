@@ -13,7 +13,7 @@ DEFAULT_WOKERS = 2
 DEFAULT_MAX_GRAPH_NODES = 1000
 
 # Default values for extraction settings
-DEFAULT_SUMMARY_LANGUAGE = "English"  # Default language for document processing
+DEFAULT_SUMMARY_LANGUAGE = "Chinese" #"English"  # Default language for document processing
 DEFAULT_MAX_GLEANING = 1
 DEFAULT_ENTITY_NAME_MAX_LENGTH = 256
 

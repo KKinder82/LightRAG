@@ -1272,6 +1272,7 @@ def chunking_by_paragraph_semantic(
     blocks_path: str | None = None,
     chunk_overlap_token_size: int = 100,
 ) -> list[dict[str, Any]]:
+    #MARK: 切分策略 2：段落语义切分（paragraph_semantic_chunking）
     """Paragraph Semantic Chunking — the ``chunking="P"`` strategy.
 
     Reads structured blocks emitted by the docx native parser at

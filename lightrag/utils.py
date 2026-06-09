@@ -722,6 +722,7 @@ def _validate_cached_response_format(response_format: Any | None) -> None:
     )
 
 
+#MARK: md 是 MD5 码的 hash
 def compute_mdhash_id(content: str, prefix: str = "") -> str:
     """
     Compute a unique ID for a given content string.
@@ -751,7 +752,7 @@ def get_unique_filename_in_parsed(target_dir: Path, original_name: str) -> str:
 
     return f"{base_name}_{int(time.time())}{extension}"
 
-
+#
 async def move_file_to_parsed_dir(
     file_path: Path,
     *,
@@ -766,6 +767,7 @@ async def move_file_to_parsed_dir(
     if not file_path.exists() or not file_path.is_file():
         return None
     if skip_if_already_parsed and file_path.parent.name == PARSED_DIR_NAME:
+        # 如果文件已经在 __parsed__ 目录下，并且设置了 skip_if_already_parsed，则直接返回原路径，避免重复移动
         return file_path
 
     parsed_dir = file_path.parent / PARSED_DIR_NAME
@@ -2905,10 +2907,11 @@ def check_storage_env_vars(storage_name: str) -> None:
     from lightrag.kg import STORAGE_ENV_REQUIREMENTS
 
     required_vars = STORAGE_ENV_REQUIREMENTS.get(storage_name, [])
-    # 确失的
+    # MARK:确失的
     missing_vars = [var for var in required_vars if var not in os.environ]
 
     if missing_vars:
+        #MARK:确失的, 异常.
         raise ValueError(
             f"Storage implementation '{storage_name}' requires the following "
             f"environment variables: {', '.join(missing_vars)}"
