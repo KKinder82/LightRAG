@@ -1271,7 +1271,7 @@ class _PipelineMixin:
                 asyncio.create_task(self._parse_worker("docling", ctx.q_docling, ctx))
             )
         for _ in range(max(1, self.max_parallel_analyze)):
-            # NEXT: 分析进程 
+            # NEXT: 分析进程
             workers.append(asyncio.create_task(self._analyze_worker(ctx)))
         for _ in range(max(1, self.max_parallel_insert)):
             # NEXT: 插入进程
@@ -2852,7 +2852,7 @@ class _PipelineMixin:
         from lightrag.sidecar import write_sidecar
 
         source_file_path = Path(
-            # NEXT: 
+            # NEXT:  解析一个路径. 
             _call_source_file_resolver(
                 self,
                 file_path,

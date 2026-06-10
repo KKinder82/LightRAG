@@ -253,16 +253,17 @@ PROCESS_OPTION_CHUNK_VECTOR: ProcessChunkingOption = (
 PROCESS_OPTION_CHUNK_PARAGRAH: ProcessChunkingOption = (
     "P"  # Paragrah-driven semantic chunking
 )
-
+#MARK: 块类别字符. 
 PROCESS_OPTION_CHUNK_CHARS: frozenset[ProcessChunkingOption] = frozenset(
     {
-        PROCESS_OPTION_CHUNK_FIXED,
-        PROCESS_OPTION_CHUNK_RECURSIVE,
-        PROCESS_OPTION_CHUNK_VECTOR,
-        PROCESS_OPTION_CHUNK_PARAGRAH, 
+        PROCESS_OPTION_CHUNK_FIXED, #F
+        PROCESS_OPTION_CHUNK_RECURSIVE, #R
+        PROCESS_OPTION_CHUNK_VECTOR, #V
+        PROCESS_OPTION_CHUNK_PARAGRAH,  #P
     }
 )
 
+#MARK: 处理选项
 SUPPORTED_PROCESS_OPTIONS = frozenset(
     {
         PROCESS_OPTION_IMAGES, # i

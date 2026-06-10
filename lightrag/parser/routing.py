@@ -63,7 +63,7 @@ def normalize_parser_engine(engine: Any) -> str:
     # 标准化 parser_engine，去掉后缀，转小写 aaa-bbb => aaa
     # -> legacy, native, mineru, docling
     """Normalize engine hints such as mineru-iet to mineru."""
-    return str(engine or "").strip().split("-", 1)[0].lower()
+    return str(engine or "").strip().split("-", 1)[0].lower() #MARK: 分析 engine-### => 返回 engine
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +134,7 @@ def validate_process_options(
             errors.append(f"{label} contains unsupported character {ch!r}")
             continue
         if ch in PROCESS_OPTION_CHUNK_CHARS and ch not in seen_chunkers:
+            # F R V P 只有一个.
             seen_chunkers.append(ch)
     if len(seen_chunkers) > 1:
         errors.append(
@@ -448,8 +449,9 @@ def resolve_chunk_options(
 
 
 def split_engine_and_options(bracket_inner: str) -> tuple[str | None, str]:
+    #MARK: bracket_inner =>  bracket: [], inner : 内部. 
+    # -> 把 einger-options => (einger, options)
     """Decompose a bracket-hint inner string into ``(engine, options)``.
-
     Format rules (see docs/FileProcessingPipeline-zh.md):
         - ``ENGINE-OPTIONS``: first ``-``-separated segment is the engine
           candidate; the remainder is the options string.
@@ -539,6 +541,7 @@ def _engine_is_usable(
 def _filename_hint_match(
     file_path: str | Path,
 ) -> tuple[re.Match[str], str, str] | None:
+    # 从文件名中,取出[PARSER_HINT], 然后再从 PARSER_HINT 中,取出 engine, options 
     """Locate a supported ``[hint]`` segment in a basename.
 
     Returns ``(match, engine_or_empty, options)`` when the bracket inner is a
@@ -549,20 +552,25 @@ def _filename_hint_match(
     raises instead of falling back.
     """
     basename = Path(file_path).name
+    # 取出 [*] 中的内容. 
     m = _PARSER_HINT_RE.search(basename)
     if not m:
         return None
     inner = m.group(1).strip()
-    if inner.startswith("-") and not inner[1:].strip():
+    if inner.startswith("-") and not inner[1:].strip(): 
+        #MARK: [-]
         return None
     if (
         "-" in inner
         and not inner.startswith("-")
-        and not inner.partition("-")[2].strip()
+        and not inner.partition("-")[2].strip() # 第二个是空的. 
     ):
+        #MARK: [*-]
         return None
+    #NEXT:
     engine, options = split_engine_and_options(inner)
     if options:
+        #NEXT:
         option_errors = validate_process_options(options)
         if option_errors:
             logger.warning(
@@ -580,7 +588,7 @@ def _filename_hint_match(
 def _validate_filename_hint_for_resolution(
     file_path: str | Path,
     *,
-    require_external_endpoint: bool,
+    require_external_endpoint: bool, # 是否需要外部的接入点. 
 ) -> None:
     # 验证文件名中的提示是否合法，抛出异常
     """Fail fast for malformed filename hints on ingestion entrypoints."""
@@ -676,6 +684,7 @@ def _validate_filename_hint_for_resolution(
 
 
 def filename_parser_hint(file_path: str | Path) -> str | None:
+    #MARK: 从文件名中分析 分析 引擎. 
     """Return the engine inferred from a filename hint, or ``None``."""
     found = _filename_hint_match(file_path)
     if not found:
@@ -685,6 +694,7 @@ def filename_parser_hint(file_path: str | Path) -> str | None:
 
 
 def filename_process_options(file_path: str | Path) -> str:
+    # MARK: 文件名处理选项. 
     """Return the raw process-options string from a filename hint."""
     found = _filename_hint_match(file_path)
     if not found:
@@ -693,6 +703,7 @@ def filename_process_options(file_path: str | Path) -> str:
 
 
 def filename_parser_directives(file_path: str | Path) -> tuple[str | None, str]:
+    # MARK: 从文件名分析指令,(是 engine, options)
     """Return ``(engine, options)`` decoded from a filename hint."""
     found = _filename_hint_match(file_path)
     if not found:
@@ -902,15 +913,16 @@ def resolve_stored_document_parser_engine(
     file_path: str | Path,
     content_data: dict[str, Any] | None,
 ) -> str:
+    # MARK: 解析己保存文件的分析引擎. 
     """Resolve parser engine for a full_docs row during pipeline processing. """
     if content_data:
         doc_format = content_data.get("parse_format", FULL_DOCS_FORMAT_RAW)
         if doc_format == FULL_DOCS_FORMAT_LIGHTRAG and content_data.get(
             "sidecar_location"
         ):
-            return PARSER_ENGINE_NATIVE
+            return PARSER_ENGINE_NATIVE # MARK: native
         if doc_format != FULL_DOCS_FORMAT_PENDING_PARSE:
-            return PARSER_ENGINE_LEGACY
+            return PARSER_ENGINE_LEGACY  # MARK: legacy
 
         suffix = parser_suffix(file_path)
         pending_engine = normalize_parser_engine(content_data.get("parse_engine"))

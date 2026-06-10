@@ -1769,6 +1769,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     async def _insert_done(
         self, pipeline_status=None, pipeline_status_lock=None
     ) -> None:
+        # MARK: 插入完成. 
         tasks = [
             cast(StorageNameSpace, storage_inst).index_done_callback()
             for storage_inst in [  # type: ignore
