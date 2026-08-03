@@ -108,6 +108,20 @@ class QueryRequest(BaseModel):
         description="If True, enables streaming output for real-time responses. Only affects /query/stream endpoint.",
     )
 
+    folder_id: Optional[str] = Field(
+        default=None,
+        description="Restrict query scope to documents within a specific folder. "
+        "None means query all documents. "
+        "When set, only documents belonging to this folder (and optionally its sub-folders) "
+        "are used for retrieval.",
+    )
+
+    include_subfolders: bool = Field(
+        default=True,
+        description="When folder_id is set, also include documents from sub-folders. "
+        "Ignored when folder_id is None.",
+    )
+
     @field_validator("query", mode="after")
     @classmethod
     def query_strip_after(cls, query: str) -> str:
@@ -132,8 +146,14 @@ class QueryRequest(BaseModel):
         # Use Pydantic's `.model_dump(exclude_none=True)` to remove None values automatically
         # Exclude API-level parameters that don't belong in QueryParam
         request_data = self.model_dump(
-            exclude_none=True, exclude={"query", "include_chunk_content"}
+            exclude_none=True,
+            exclude={"query", "include_chunk_content", "folder_id", "include_subfolders"},
         )
+
+        # Build folder_ids list from the single folder_id parameter
+        if self.folder_id is not None:
+            request_data["folder_ids"] = [self.folder_id]
+        request_data["include_subfolders"] = self.include_subfolders
 
         # Ensure `mode` and `stream` are set explicitly
         param = QueryParam(**request_data)

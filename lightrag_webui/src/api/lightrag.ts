@@ -297,6 +297,7 @@ export type DocStatusResponse = {
   metadata?: Record<string, any>
   file_path: string
   folder_id?: string | null
+  folder_ids?: string[] | null
   folder_path?: string | null
 }
 
@@ -382,12 +383,10 @@ export type LoginResponse = {
 export const InvalidApiKeyError = 'Invalid API Key'
 export const RequireApiKeError = 'API Key required'
 
-// Axios instance
+// Axios instance — Content-Type is set in the interceptor (JSON by default,
+// cleared for FormData so the browser auto-sets multipart with boundary).
 const axiosInstance = axios.create({
   baseURL: backendBaseUrl,
-  headers: {
-    'Content-Type': 'application/json'
-  }
 })
 
 // ========== Token Management ==========
@@ -444,6 +443,17 @@ axiosInstance.interceptors.request.use((config) => {
   if (config.headers['X-Skip-Interceptor']) {
     delete config.headers['X-Skip-Interceptor'];
     return config;
+  }
+
+  // Set Content-Type: application/json for JSON bodies.
+  // For FormData (file uploads), leave it unset so the browser
+  // auto-generates multipart/form-data with the correct boundary
+  // — without the boundary, the server cannot parse fields like
+  // folder_id.
+  if (!config.data || !(config.data instanceof FormData)) {
+    if (!config.headers['Content-Type']) {
+      config.headers['Content-Type'] = 'application/json';
+    }
   }
 
   const apiKey = useSettingsStore.getState().apiKey
@@ -962,9 +972,6 @@ export const uploadDocument = async (
   }
 
   const response = await axiosInstance.post('/documents/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data'
-    },
     // prettier-ignore
     onUploadProgress:
       onUploadProgress !== undefined
@@ -1009,10 +1016,15 @@ export const clearCache = async (): Promise<{
 export const deleteDocuments = async (
   docIds: string[],
   deleteFile: boolean = false,
-  deleteLLMCache: boolean = false
+  deleteLLMCache: boolean = false,
+  folderId?: string | null
 ): Promise<DeleteDocResponse> => {
+  const data: Record<string, any> = { doc_ids: docIds, delete_file: deleteFile, delete_llm_cache: deleteLLMCache }
+  if (folderId) {
+    data.folder_id = folderId
+  }
   const response = await axiosInstance.delete('/documents/delete_document', {
-    data: { doc_ids: docIds, delete_file: deleteFile, delete_llm_cache: deleteLLMCache }
+    data
   })
   return response.data
 }

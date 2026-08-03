@@ -19,6 +19,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     UploadFile,
 )
@@ -94,6 +95,30 @@ temp_prefix = "__tmp__"
 UNKNOWN_FILE_SOURCE = "unknown_source"
 LEGACY_EMPTY_FILE_PATH_SENTINELS = {"", "no-file-path"}
 ARCHIVED_FILE_SUFFIX_RE = re.compile(r"_(?:\d{3}|\d{10,})$")
+
+
+# ---------------------------------------------------------------------------
+# Folder-id list helpers (supports multi-folder document references)
+# ---------------------------------------------------------------------------
+
+def _get_folder_ids_from_metadata(metadata: dict | None) -> list[str]:
+    """Extract folder IDs from doc metadata with backward compat for single folder_id."""
+    if not isinstance(metadata, dict):
+        return []
+    # New format: folder_ids (list)
+    ids = metadata.get("folder_ids")
+    if isinstance(ids, list):
+        return [str(fid) for fid in ids if fid]
+    # Legacy format: folder_id (single string)
+    single = metadata.get("folder_id")
+    if isinstance(single, str) and single:
+        return [single]
+    return []
+
+
+def _folder_ids_includes(metadata: dict | None, folder_id: str) -> bool:
+    """Check whether a given folder_id is present in the metadata folder list."""
+    return folder_id in _get_folder_ids_from_metadata(metadata)
 
 
 # 标准化文件路径。
@@ -632,6 +657,11 @@ class DeleteDocRequest(BaseModel):
         default=False,
         description="Whether to delete cached LLM extraction results for the documents.",
     )
+    folder_id: Optional[str] = Field(
+        default=None,
+        description="If provided, only removes the document from this folder "
+        "(reference-count aware). If not provided, performs a full delete.",
+    )
 
     @field_validator("doc_ids", mode="after")
     @classmethod
@@ -696,7 +726,10 @@ class DocStatusResponse(BaseModel):
     )
     file_path: str = Field(description="Path to the document file")
     folder_id: Optional[str] = Field(
-        default=None, description="ID of the folder this document belongs to"
+        default=None, description="Primary folder ID (first in folder_ids list, for backward compat)"
+    )
+    folder_ids: Optional[List[str]] = Field(
+        default=None, description="All folder IDs this document belongs to"
     )
     folder_path: Optional[str] = Field(
         default=None,
@@ -1925,6 +1958,41 @@ async def pipeline_enqueue_file(
         except Exception:
             file_size = 0
 
+        # ------------------------------------------------------------------
+        # Multi-folder support: same file, different folders.
+        # If the document already exists in doc_status AND the requested
+        # folder_id is NOT already associated with it, add the folder
+        # relationship without re-processing the file.
+        # If the document already exists with the SAME folder_id, return
+        # False (not success) so the background task doesn't double-process.
+        # ------------------------------------------------------------------
+        if folder_id:
+            canonical = normalize_document_file_path(str(file_path))
+            doc_id = compute_mdhash_id(canonical, prefix="doc-")
+            existing = await rag.doc_status.get_by_id(doc_id)
+            if existing:
+                existing_meta = existing.get("metadata") or {}
+                existing_folder_ids = _get_folder_ids_from_metadata(existing_meta)
+                if folder_id in existing_folder_ids:
+                    logger.info(
+                        f"[Multi-folder] File '{file_path.name}' already "
+                        f"exists in this folder (doc_id={doc_id}), "
+                        f"skipping duplicate"
+                    )
+                    return False, track_id
+                # Same file, different folder: just add the relationship
+                existing_folder_ids.append(folder_id)
+                existing_meta["folder_ids"] = existing_folder_ids
+                existing_meta["folder_id"] = existing_folder_ids[0]
+                existing["metadata"] = existing_meta
+                await rag.doc_status.upsert({doc_id: existing})
+                logger.info(
+                    f"[Multi-folder] Added folder '{folder_id}' to existing "
+                    f"document {doc_id} ({file_path.name}), "
+                    f"total folders: {len(existing_folder_ids)}"
+                )
+                return True, track_id
+
         # MARK: 获得文件处理指令
         try:
             # 解板文件处理指令。
@@ -1959,6 +2027,8 @@ async def pipeline_enqueue_file(
                     "process_options": api_process_options,
                     "from_scan": from_scan,
                 }
+                if folder_id:
+                    enqueue_kwargs["folder_id"] = folder_id
                 # TODO: 一会儿处理。
                 enqueue_result = await rag.apipeline_enqueue_documents(
                     "", **enqueue_kwargs
@@ -2298,6 +2368,8 @@ async def pipeline_enqueue_file(
                     "process_options": api_process_options,
                     "from_scan": from_scan,
                 }
+                if folder_id:
+                    enqueue_kwargs["folder_id"] = folder_id
                 #MARK: 内容处理完成，进入排队流程。
                 #IMPO:
                 enqueue_result = await rag.apipeline_enqueue_documents(
@@ -2313,21 +2385,6 @@ async def pipeline_enqueue_file(
                         )
                     #RET:
                     return False, track_id
-
-                # Tag document with folder_id if provided
-                if folder_id:
-                    # Use the same doc_id formula as apipeline_enqueue_documents:
-                    # for known sources (files with a name), the id is derived from
-                    # the canonical filename, not the content.
-                    canonical = normalize_document_file_path(file_path.name)
-                    doc_id = compute_mdhash_id(canonical, prefix="doc-")
-                    existing = await rag.doc_status.get_by_id(doc_id)
-                    if existing:
-                        meta = existing.get("metadata") or {}
-                        meta["folder_id"] = folder_id  # 在元数据中，记录所属文件夹
-                        existing["metadata"] = meta
-                        #IMPO: 保存
-                        await rag.doc_status.upsert({doc_id: existing})
 
                 logger.info(
                     f"Successfully extracted and enqueued file: {file_path.name}"
@@ -2614,6 +2671,7 @@ async def pipeline_index_texts(
     file_sources: List[str] = None,
     track_id: str | None = None,
     chunking: Optional[TextChunkingConfig] = None,
+    folder_id: Optional[str] = None,
 ):
     """Index a list of texts with track_id
 
@@ -2624,6 +2682,7 @@ async def pipeline_index_texts(
         track_id: Optional tracking ID
         chunking: Optional chunking strategy + params (already validated by
             the request model); when None, default fixed-token chunking is used
+        folder_id: Optional folder ID to tag documents with
     """
     if not texts:
         return
@@ -2638,13 +2697,16 @@ async def pipeline_index_texts(
         raise ValueError("File sources must be unique by filename")
 
     process_options, chunk_options = _resolve_text_chunking(chunking, rag)
-    await rag.apipeline_enqueue_documents(
-        input=texts,
-        file_paths=normalized_file_sources,
-        track_id=track_id,
-        process_options=process_options,
-        chunk_options=chunk_options,
-    )
+    enqueue_kwargs = {
+        "input": texts,
+        "file_paths": normalized_file_sources,
+        "track_id": track_id,
+        "process_options": process_options,
+        "chunk_options": chunk_options,
+    }
+    if folder_id:
+        enqueue_kwargs["folder_id"] = folder_id
+    await rag.apipeline_enqueue_documents(**enqueue_kwargs)
     await rag.apipeline_process_enqueue_documents()
 
 
@@ -2658,23 +2720,12 @@ async def pipeline_index_texts_with_folder_id(
 ):
     """Index texts and tag resulting documents with folder_id.
 
-    Wraps pipeline_index_texts and, after completion, updates doc_status
-    metadata with the given folder_id for each indexed document.
+    Delegates to pipeline_index_texts which passes folder_id to
+    apipeline_enqueue_documents for direct storage in doc_status metadata.
     """
-    await pipeline_index_texts(rag, texts, file_sources, track_id, chunking=chunking)
-    if folder_id and texts:
-        for text in texts:
-            # Use the same doc_id formula as apipeline_enqueue_documents for RAW text:
-            # doc_id = compute_mdhash_id(content_hash, prefix="doc-") where
-            # content_hash = compute_text_content_hash(content).
-            content_hash = compute_text_content_hash(text)
-            doc_id = compute_mdhash_id(content_hash, prefix="doc-")
-            existing = await rag.doc_status.get_by_id(doc_id)
-            if existing:
-                meta = existing.get("metadata") or {}
-                meta["folder_id"] = folder_id
-                existing["metadata"] = meta
-                await rag.doc_status.upsert({doc_id: existing})
+    await pipeline_index_texts(
+        rag, texts, file_sources, track_id, chunking=chunking, folder_id=folder_id
+    )
 
 
 async def run_scanning_process(
@@ -3268,7 +3319,7 @@ def create_document_routes(
     async def upload_to_input_dir(
         background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
-        folder_id: Optional[str] = None,
+        folder_id: Optional[str] = Form(None),
     ):
         
         slot_reserved = False
@@ -3320,23 +3371,77 @@ def create_document_routes(
 
             # Strict name pre-check.  Both the INPUT directory and doc_status
             # must be free of any same-canonical-basename record before we
-            # accept the upload.  Replacing an existing document requires an
-            # explicit DELETE first; we no longer write a "duplicated" 200
-            # response that silently no-ops.
+            # accept the upload.
+            # With multi-folder support: same file in different folders is
+            # allowed; only same-file + same-folder is rejected.
             # 如果文件存储，則返回文件，不存在，返回 None
             existing_doc_data = await get_existing_doc_by_file_path_candidates(
                 rag.doc_status, file_path
             )
             if existing_doc_data:
-                # 文件存在
-                status = get_doc_status_value(existing_doc_data) or "unknown"
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Document storage already contains '{safe_filename}' "
-                        f"(Status: {status}). Delete the existing record before re-uploading."
-                    ),
-                )
+                existing_meta = existing_doc_data.get("metadata") or {}
+                if folder_id and _folder_ids_includes(existing_meta, folder_id):
+                    # Same file, same folder: reject
+                    status = get_doc_status_value(existing_doc_data) or "unknown"
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Document '{safe_filename}' already exists "
+                            f"in this folder (Status: {status}). "
+                            f"Same file cannot be uploaded twice to the same folder."
+                        ),
+                    )
+                if folder_id:
+                    # Same file, different folder: just update metadata
+                    existing_folder_ids = _get_folder_ids_from_metadata(existing_meta)
+                    existing_folder_ids.append(folder_id)
+                    existing_meta["folder_ids"] = existing_folder_ids
+                    existing_meta["folder_id"] = existing_folder_ids[0]
+                    existing_doc_data["metadata"] = existing_meta
+                    doc_id = compute_mdhash_id(
+                        normalize_file_path(safe_filename), prefix="doc-"
+                    )
+                    await rag.doc_status.upsert({doc_id: existing_doc_data})
+                    logger.info(
+                        f"[Multi-folder] Added folder '{folder_id}' to "
+                        f"existing document '{safe_filename}' "
+                        f"(total folders: {len(existing_folder_ids)})"
+                    )
+                    return InsertResponse(
+                        status="success",
+                        message=(
+                            f"File '{safe_filename}' is already processed. "
+                            f"Added to the new folder."
+                        ),
+                        track_id=existing_doc_data.get("track_id", ""),
+                    )
+                if not folder_id:
+                    # No folder specified but file already exists.
+                    # If the doc is PROCESSED (or similar success states),
+                    # return success — the file is already analyzed.
+                    # If the doc is FAILED, reject so the user can delete
+                    # and retry (the original strict-name-pre-check behavior).
+                    status = get_doc_status_value(existing_doc_data) or "unknown"
+                    if status == DocStatus.FAILED.value:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Document storage already contains '{safe_filename}' "
+                                f"(Status: {status}). Delete the existing record before re-uploading."
+                            ),
+                        )
+                    logger.info(
+                        f"[Multi-folder] File '{safe_filename}' already exists "
+                        f"(Status: {status}), no folder specified — returning success"
+                    )
+                    return InsertResponse(
+                        status="success",
+                        message=(
+                            f"File '{safe_filename}' is already processed "
+                            f"(Status: {status}). No new folder specified."
+                        ),
+                        track_id=existing_doc_data.get("track_id", ""),
+                    )
 
             # INPUT directory check, using canonical parser-hint names.
             # Fast path: exact filename match avoids iterdir on large input directories.
@@ -3500,14 +3605,67 @@ def create_document_routes(
                 rag.doc_status, normalized_file_source
             )
             if existing_doc_data:
-                status = get_doc_status_value(existing_doc_data) or "unknown"
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Document storage already contains '{normalized_file_source}' "
-                        f"(Status: {status}). Delete the existing record before re-inserting."
-                    ),
-                )
+                existing_meta = existing_doc_data.get("metadata") or {}
+                if request.folder_id and _folder_ids_includes(existing_meta, request.folder_id):
+                    # Same text source, same folder: reject
+                    status = get_doc_status_value(existing_doc_data) or "unknown"
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Document '{normalized_file_source}' already exists "
+                            f"in this folder (Status: {status}). "
+                            f"Same text cannot be inserted twice to the same folder."
+                        ),
+                    )
+                if request.folder_id:
+                    # Same text source, different folder: add relationship
+                    existing_folder_ids = _get_folder_ids_from_metadata(existing_meta)
+                    existing_folder_ids.append(request.folder_id)
+                    existing_meta["folder_ids"] = existing_folder_ids
+                    existing_meta["folder_id"] = existing_folder_ids[0]
+                    existing_doc_data["metadata"] = existing_meta
+                    doc_id = compute_mdhash_id(normalized_file_source, prefix="doc-")
+                    await rag.doc_status.upsert({doc_id: existing_doc_data})
+                    logger.info(
+                        f"[Multi-folder] Added folder '{request.folder_id}' to "
+                        f"existing document '{normalized_file_source}' "
+                        f"(total folders: {len(existing_folder_ids)})"
+                    )
+                    slot_reserved = await _reserve_enqueue_slot(rag)
+                    slot_reserved = False  # no bg task needed
+                    return InsertResponse(
+                        status="success",
+                        message=(
+                            f"Text '{normalized_file_source}' is already processed. "
+                            f"Added to the new folder."
+                        ),
+                        track_id=existing_doc_data.get("track_id", ""),
+                    )
+                if not request.folder_id:
+                    # No folder specified but text already exists.
+                    # If the doc is FAILED, reject so the user can delete
+                    # and retry. Otherwise return success (already processed).
+                    status = get_doc_status_value(existing_doc_data) or "unknown"
+                    if status == DocStatus.FAILED.value:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Document storage already contains '{normalized_file_source}' "
+                                f"(Status: {status}). Delete the existing record before re-inserting."
+                            ),
+                        )
+                    logger.info(
+                        f"[Multi-folder] Text '{normalized_file_source}' already exists "
+                        f"(Status: {status}), no folder specified — returning success"
+                    )
+                    return InsertResponse(
+                        status="success",
+                        message=(
+                            f"Text '{normalized_file_source}' is already processed "
+                            f"(Status: {status}). No new folder specified."
+                        ),
+                        track_id=existing_doc_data.get("track_id", ""),
+                    )
 
             # Resolve + validate chunking synchronously so an invalid
             # effective config (e.g. chunk_token_size below the inherited
@@ -3622,19 +3780,39 @@ def create_document_routes(
                     detail="file_sources must be unique by filename",
                 )
 
+            failed_sources: list[str] = []
             for file_source in normalized_file_sources:
                 existing_doc_data = await get_existing_doc_by_file_path_candidates(
                     rag.doc_status, file_source
                 )
                 if existing_doc_data:
-                    status = get_doc_status_value(existing_doc_data) or "unknown"
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            f"Document storage already contains '{file_source}' "
-                            f"(Status: {status}). Delete the existing record before re-inserting."
-                        ),
-                    )
+                    existing_meta = existing_doc_data.get("metadata") or {}
+                    if request.folder_id and _folder_ids_includes(existing_meta, request.folder_id):
+                        # Same source, same folder: reject this one
+                        status = get_doc_status_value(existing_doc_data) or "unknown"
+                        failed_sources.append(
+                            f"'{file_source}' already in this folder (Status: {status})"
+                        )
+                        continue
+                    if request.folder_id:
+                        # Same source, different folder: add silently
+                        existing_folder_ids = _get_folder_ids_from_metadata(existing_meta)
+                        existing_folder_ids.append(request.folder_id)
+                        existing_meta["folder_ids"] = existing_folder_ids
+                        existing_meta["folder_id"] = existing_folder_ids[0]
+                        existing_doc_data["metadata"] = existing_meta
+                        doc_id = compute_mdhash_id(file_source, prefix="doc-")
+                        await rag.doc_status.upsert({doc_id: existing_doc_data})
+                        continue
+                    if not request.folder_id:
+                        # No folder specified but text already exists:
+                        # Skip silently — the text is already processed.
+                        logger.info(
+                            f"[Multi-folder] Text '{file_source}' already exists, "
+                            f"no folder specified — skipping"
+                        )
+                        continue
+            # Note: failed_sources only contains same-file-same-folder conflicts
 
             # Resolve + validate the shared chunking synchronously so an
             # invalid effective config (e.g. chunk_token_size below the
@@ -4100,7 +4278,7 @@ def create_document_routes(
     class DeleteDocByIdResponse(BaseModel):
         """Response model for single document deletion operation."""
 
-        status: Literal["deletion_started", "busy", "not_allowed"] = Field(
+        status: Literal["deletion_started", "busy", "not_allowed", "success", "not_found"] = Field(
             description="Status of the deletion operation"
         )
         message: str = Field(description="Message describing the operation result")
@@ -4119,37 +4297,67 @@ def create_document_routes(
         """
         Delete documents and all their associated data by their IDs using background processing.
 
-        Deletes specific documents and all their associated data, including their status,
-        text chunks, vector embeddings, and any related graph data. When requested,
-        cached LLM extraction responses are removed after graph deletion/rebuild completes.
-        The deletion process runs in the background to avoid blocking the client connection.
-
-        This operation is irreversible and will interact with the pipeline status.
-
-        **Concurrency Constraint:**
-        - Atomically reserves the destructive slot (sets ``busy=True``
-          and ``destructive_busy=True``) **synchronously** before
-          returning ``deletion_started``, so a /scan or /upload that
-          arrives before the bg task runs cannot race the delete.
-          Refuses with ``status="busy"`` when ANY of these is set:
-          ``pipeline_status["busy"]``, ``pipeline_status["scanning"]``,
-          or ``pipeline_status["pending_enqueues"] > 0``.
+        With multi-folder support:
+        - If ``folder_id`` is provided: only removes the document from that folder.
+          If other folders still reference the document, the document itself is kept.
+          This is a synchronous operation (no background task).
+        - If ``folder_id`` is not provided: fully deletes the document and all its data
+          regardless of folder references (old behavior, background task).
 
         Args:
-            delete_request (DeleteDocRequest): The request containing the document IDs and deletion options.
-            background_tasks: FastAPI BackgroundTasks for async processing
+            delete_request (DeleteDocRequest): The request containing the document IDs,
+                deletion options, and optional folder_id for folder-level removal.
 
         Returns:
             DeleteDocByIdResponse: The result of the deletion operation.
-                - status="deletion_started": The document deletion has been initiated in the background.
-                - status="busy": Another writer (busy / scanning / pending enqueue) holds the
-                  pipeline; nothing scheduled, retry after the running job finishes.
-
-        Raises:
-            HTTPException:
-              - 500: If an unexpected internal error occurs during initialization.
         """
         doc_ids = delete_request.doc_ids
+
+        # ------------------------------------------------------------------
+        # Folder-level removal: just remove the folder relationship,
+        # keep the document if other folders still reference it.
+        # ------------------------------------------------------------------
+        if delete_request.folder_id and len(doc_ids) == 1:
+            doc_id = doc_ids[0]
+            doc_data = await rag.doc_status.get_by_id(doc_id)
+            if doc_data:
+                meta = doc_data.get("metadata") or {}
+                folder_ids = _get_folder_ids_from_metadata(meta)
+                if delete_request.folder_id in folder_ids:
+                    folder_ids.remove(delete_request.folder_id)
+                    if folder_ids:
+                        # Still referenced by other folders: keep document
+                        meta["folder_ids"] = folder_ids
+                        meta["folder_id"] = folder_ids[0]
+                        doc_data["metadata"] = meta
+                        await rag.doc_status.upsert({doc_id: doc_data})
+                        return DeleteDocByIdResponse(
+                            status="success",
+                            message=(
+                                f"Removed document '{doc_id}' from folder "
+                                f"'{delete_request.folder_id}'. "
+                                f"Still exists in {len(folder_ids)} other folder(s)."
+                            ),
+                            doc_id=doc_id,
+                        )
+                    else:
+                        # No more folder references: proceed to full delete below
+                        pass
+                else:
+                    return DeleteDocByIdResponse(
+                        status="not_found",
+                        message=(
+                            f"Document '{doc_id}' is not in folder "
+                            f"'{delete_request.folder_id}'."
+                        ),
+                        doc_id=doc_id,
+                    )
+            else:
+                return DeleteDocByIdResponse(
+                    status="not_found",
+                    message=f"Document '{doc_id}' not found.",
+                    doc_id=doc_id,
+                )
 
         slot_acquired = False
         try:
@@ -4548,6 +4756,8 @@ def create_document_routes(
             response_assembly_start = time.perf_counter()
             doc_responses = []
             for doc_id, doc in documents_with_ids:
+                meta = doc.metadata or {}
+                folder_ids_list = _get_folder_ids_from_metadata(meta)
                 doc_responses.append(
                     DocStatusResponse(
                         id=doc_id,
@@ -4561,7 +4771,8 @@ def create_document_routes(
                         error_msg=doc.error_msg,
                         metadata=doc.metadata,
                         file_path=normalize_file_path(doc.file_path),
-                        folder_id=doc.metadata.get("folder_id") if doc.metadata else None,
+                        folder_id=folder_ids_list[0] if folder_ids_list else None,
+                        folder_ids=folder_ids_list if folder_ids_list else None,
                     )
                 )
 

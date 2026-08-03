@@ -91,7 +91,7 @@ def _get_relationship_vdb_timeout_seconds(global_config: dict[str, Any]) -> floa
     """
     configured = global_config.get("default_embedding_timeout")
     try:
-        base_timeout = float(configured)
+        base_timeout = float(configured) #type: ignore
     except (TypeError, ValueError):
         base_timeout = 30.0
     # Keep a fixed lower bound high enough to avoid false positives on slow providers.
@@ -618,7 +618,7 @@ def _looks_like_json_extraction_result(result: str) -> bool:
 
     return False
 
-
+#MARK: 处理提取json.
 async def _process_json_extraction_result(
     result: str,
     chunk_key: str,
@@ -663,6 +663,7 @@ async def _process_json_extraction_result(
         )
         entities_list = []
 
+    #MARK: 分析实体
     for entity_data in entities_list:
         if not isinstance(entity_data, dict):
             continue
@@ -723,7 +724,7 @@ async def _process_json_extraction_result(
             )
             continue
 
-    # Process relationships
+    # MARK: 处理关系 Process relationships
     relationships_list = parsed.get("relationships", [])
     if not isinstance(relationships_list, list):
         logger.warning(
@@ -2886,6 +2887,7 @@ async def merge_nodes_and_edges(
         pipeline_status["latest_message"] = log_message
         pipeline_status["history_messages"].append(log_message)
 
+
     # Get max async tasks limit from global_config for semaphore control
     graph_max_async = global_config.get("llm_model_max_async", 4) * 2
     semaphore = asyncio.Semaphore(graph_max_async)
@@ -3218,6 +3220,7 @@ async def merge_nodes_and_edges(
         pipeline_status["history_messages"].append(log_message)
 
 
+#IMPO:  实体提取
 async def extract_entities(
     chunks: dict[str, TextChunkSchema],
     global_config: dict[str, str],
@@ -3234,7 +3237,7 @@ async def extract_entities(
                     "User cancelled during entity extraction"
                 )
 
-    use_llm_func: callable = global_config["role_llm_funcs"]["extract"]
+    use_llm_func: callable = global_config["role_llm_funcs"]["extract"] #type: ignore
     entity_extract_max_gleaning = global_config["entity_extract_max_gleaning"]
     # Cap on the gleaning LLM call's combined input (system + history user
     # prompt + history assistant response + continue prompt).  Pulled from
@@ -3246,7 +3249,7 @@ async def extract_entities(
         DEFAULT_MAX_EXTRACT_INPUT_TOKENS,
         int,
     )
-    extract_tokenizer: Tokenizer | None = global_config.get("tokenizer")
+    extract_tokenizer: Tokenizer | None = global_config.get("tokenizer") #type: ignore
 
     # Check if JSON structured output mode is enabled
     use_json_extraction = global_config.get("entity_extraction_use_json", False)
@@ -3272,6 +3275,7 @@ async def extract_entities(
     max_entity_records = global_config["entity_extract_max_entities"]
 
     if use_json_extraction:
+        # 
         # JSON mode: use JSON-specific prompts without delimiters
         examples = "\n".join(prompt_profile["entity_extraction_json_examples"])
         context_base = dict(
@@ -3366,7 +3370,7 @@ async def extract_entities(
             entity_extraction_user_prompt, final_result
         )
 
-        # Process initial extraction with appropriate parser
+        # MARK: Process initial extraction with appropriate parser
         if use_json_extraction:
             maybe_nodes, maybe_edges = await _process_json_extraction_result(
                 final_result,
@@ -3579,7 +3583,7 @@ async def extract_entities(
 
     async def _process_with_semaphore(chunk):
         async with semaphore:
-            # Check for cancellation before processing chunk
+            # MARK: 检pipeline是否有取消.
             if pipeline_status is not None and pipeline_status_lock is not None:
                 async with pipeline_status_lock:
                     if pipeline_status.get("cancellation_requested", False):
@@ -3598,6 +3602,7 @@ async def extract_entities(
                 prefixed_exception = create_prefixed_exception(e, chunk_id)
                 raise prefixed_exception from e
 
+    #MARK: 任务(每一个块儿)
     tasks = []
     for c in ordered_chunks:
         task = asyncio.create_task(_process_with_semaphore(c))
@@ -3608,10 +3613,11 @@ async def extract_entities(
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
 
     # Check if any task raised an exception and ensure all exceptions are retrieved
-    first_exception = None
-    chunk_results = []
+    first_exception = None #MARK: 异常.
+    chunk_results = [] #MARK: 分析结果
 
     for task in done:
+        #MARK: 完成
         try:
             exception = task.exception()
             if exception is not None:
@@ -3625,12 +3631,15 @@ async def extract_entities(
 
     # If any task failed, cancel all pending tasks and raise the first exception
     if first_exception is not None:
+        #MARK: 有错误. 
         # Cancel all pending tasks
         for pending_task in pending:
+            #MARK: 取消所有任务
             pending_task.cancel()
 
         # Wait for cancellation to complete
         if pending:
+            #MARK: 等待取消
             await asyncio.wait(pending)
 
         # Add progress prefix to the exception message
@@ -3645,6 +3654,7 @@ async def extract_entities(
     return chunk_results
 
 
+#MARK: 知识图谱查询. 
 async def kg_query(
     query: str,
     knowledge_graph_inst: BaseGraphStorage,
@@ -3688,6 +3698,7 @@ async def kg_query(
         Returns None when no relevant context could be constructed for the query.
     """
     if not query:
+        #RET: 返回
         return QueryResult(content=PROMPTS["fail_response"])
 
     # Apply higher priority (5) to query relation LLM function
@@ -3853,7 +3864,7 @@ async def kg_query(
             is_streaming=True,
         )
 
-
+#MARK: 获了关键字, Entity
 async def get_keywords_from_query(
     query: str,
     query_param: QueryParam,
@@ -4009,11 +4020,12 @@ def _parse_keywords_payload(result: Any) -> tuple[bool, list[str], list[str]]:
     return True, hl_keywords, ll_keywords
 
 
+#MARK: (仅)利用LLM抽取关系
 async def extract_keywords_only(
     text: str,
     param: QueryParam,
     global_config: dict[str, str],
-    hashing_kv: BaseKVStorage | None = None,
+    hashing_kv: BaseKVStorage | None = None, #MARK: 缓冲
 ) -> tuple[list[str], list[str]]:
     """
     Extract high-level and low-level keywords from the given 'text' using the LLM.
@@ -4066,7 +4078,7 @@ async def extract_keywords_only(
         f"[extract_keywords] Sending to LLM: {len_of_prompts:,} tokens (Prompt: {len_of_prompts})"
     )
 
-    # 4. Call the LLM for keyword extraction
+    # 4. Call the LLM for keyword extraction (LLM)
     # Apply higher priority (5) to query relation LLM function
     use_model_func = partial(global_config["role_llm_funcs"]["keyword"], _priority=5)
 
@@ -4166,6 +4178,131 @@ async def _get_vector_context(
         return []
 
 
+async def _filter_entities_relations_by_doc_ids(
+    entities: list[dict],
+    relations: list[dict],
+    filter_doc_ids: set[str],
+    text_chunks_db: BaseKVStorage,
+    graph_field_sep: str,
+) -> tuple[list[dict], list[dict]]:
+    """Filter entities and relations to only those whose source chunks
+    belong to the given document IDs.
+
+    Returns filtered (entities, relations) tuples.  When *filter_doc_ids*
+    is empty or None the original lists are returned unchanged.
+    """
+    if not filter_doc_ids:
+        return entities, relations
+
+    # Collect all unique chunk IDs referenced by entities and relations
+    all_chunk_ids: set[str] = set()
+    for item in entities + relations:
+        source_str = item.get("source_id", "")
+        if source_str:
+            for cid in source_str.split(graph_field_sep):
+                cid = cid.strip()
+                if cid:
+                    all_chunk_ids.add(cid)
+
+    if not all_chunk_ids:
+        return entities, relations
+
+    # Batch-fetch chunk records to resolve chunk_id -> full_doc_id
+    try:
+        chunk_list = list(all_chunk_ids)
+        chunk_records = await text_chunks_db.get_by_ids(chunk_list)
+        # Build mapping: chunk_id -> full_doc_id  (get_by_ids returns list in same order)
+        allowed_chunk_ids: set[str] = set()
+        for cid, record in zip(chunk_list, chunk_records):
+            if record and record.get("full_doc_id") in filter_doc_ids:
+                allowed_chunk_ids.add(cid)
+    except Exception as e:
+        logger.warning(f"Failed to resolve chunk doc IDs for filtering: {e}")
+        return entities, relations
+
+    if not allowed_chunk_ids:
+        return [], []
+
+    # Filter entities
+    filtered_entities = []
+    for entity in entities:
+        source_str = entity.get("source_id", "")
+        if source_str:
+            entity_chunk_ids = {
+                c.strip()
+                for c in source_str.split(graph_field_sep)
+                if c.strip()
+            }
+            if entity_chunk_ids & allowed_chunk_ids:
+                filtered_entities.append(entity)
+
+    # Filter relations
+    filtered_relations = []
+    for relation in relations:
+        source_str = relation.get("source_id", "")
+        if source_str:
+            rel_chunk_ids = {
+                c.strip()
+                for c in source_str.split(graph_field_sep)
+                if c.strip()
+            }
+            if rel_chunk_ids & allowed_chunk_ids:
+                filtered_relations.append(relation)
+
+    if len(filtered_entities) != len(entities) or len(filtered_relations) != len(
+        relations
+    ):
+        logger.info(
+            f"Folder filter: entities {len(entities)} -> {len(filtered_entities)}, "
+            f"relations {len(relations)} -> {len(filtered_relations)}"
+        )
+
+    return filtered_entities, filtered_relations
+
+
+async def _filter_chunks_by_doc_ids(
+    chunks: list[dict],
+    filter_doc_ids: set[str],
+    text_chunks_db: BaseKVStorage,
+) -> list[dict]:
+    """Filter chunks to only those whose full_doc_id is in the allowed set."""
+    if not filter_doc_ids:
+        return chunks
+
+    # Collect all chunk IDs
+    chunk_ids = []
+    for chunk in chunks:
+        cid = chunk.get("chunk_id") or chunk.get("id")
+        if cid:
+            chunk_ids.append(cid)
+
+    if not chunk_ids:
+        return chunks
+
+    try:
+        chunk_records = await text_chunks_db.get_by_ids(chunk_ids)
+        allowed_ids: set[str] = set()
+        for cid, record in zip(chunk_ids, chunk_records):
+            if record and record.get("full_doc_id") in filter_doc_ids:
+                allowed_ids.add(cid)
+    except Exception as e:
+        logger.warning(f"Failed to resolve chunk doc IDs for filtering: {e}")
+        return chunks
+
+    filtered = [
+        c
+        for c in chunks
+        if (c.get("chunk_id") or c.get("id")) in allowed_ids
+    ]
+
+    if len(filtered) != len(chunks):
+        logger.info(
+            f"Folder filter: chunks {len(chunks)} -> {len(filtered)}"
+        )
+
+    return filtered
+
+
 async def _perform_kg_search(
     query: str,
     ll_keywords: str,
@@ -4183,12 +4320,14 @@ async def _perform_kg_search(
     """
 
     # Initialize result containers
-    local_entities = []
-    local_relations = []
-    global_entities = []
-    global_relations = []
-    vector_chunks = []
-    chunk_tracking = {}
+    local_entities = []  # 本地实体
+    local_relations = [] # 本地关系
+    
+    global_entities = [] # 全局实体
+    global_relations = [] # 全局关系
+
+    vector_chunks = [] # 向量,块
+    chunk_tracking = {} # 块_跟踪
 
     # Handle different query modes
 
@@ -4366,6 +4505,28 @@ async def _perform_kg_search(
     logger.info(
         f"Raw search results: {len(final_entities)} entities, {len(final_relations)} relations, {len(vector_chunks)} vector chunks"
     )
+
+    # Apply folder/doc filter if configured
+    if query_param.filter_doc_ids is not None:
+        final_entities, final_relations = (
+            await _filter_entities_relations_by_doc_ids(
+                final_entities,
+                final_relations,
+                query_param.filter_doc_ids,
+                text_chunks_db,
+                GRAPH_FIELD_SEP,
+            )
+        )
+        vector_chunks = await _filter_chunks_by_doc_ids(
+            vector_chunks,
+            query_param.filter_doc_ids,
+            text_chunks_db,
+        )
+        # Also filter chunk_tracking to stay consistent
+        allowed_chunk_ids = {c.get("chunk_id") or c.get("id") for c in vector_chunks}
+        chunk_tracking = {
+            k: v for k, v in chunk_tracking.items() if k in allowed_chunk_ids
+        }
 
     return {
         "final_entities": final_entities,
@@ -4755,7 +4916,7 @@ async def _build_context_str(
     for i, chunk in enumerate(truncated_chunks):
         chunks_context.append(
             {
-                "reference_id": chunk["reference_id"],
+                "referenfiltered_relationsce_id": chunk["reference_id"],
                 "content": chunk["content"],
             }
         )
@@ -4969,6 +5130,7 @@ async def _get_node_data(
     )
 
     if not len(results):
+        #RET: 返回
         return [], []
 
     # Extract all entity IDs from your results list
@@ -5010,6 +5172,7 @@ async def _get_node_data(
 
     # Entities are sorted by cosine similarity
     # Relations are sorted by rank + weight
+    #RET: 返回
     return node_datas, use_relations
 
 
@@ -5531,6 +5694,7 @@ async def naive_query(
     global_config: dict[str, str],
     hashing_kv: BaseKVStorage | None = None,
     system_prompt: str | None = None,
+    text_chunks_db: BaseKVStorage | None = None,
     return_raw_data: Literal[True] = True,
 ) -> dict[str, Any]: ...
 
@@ -5543,6 +5707,7 @@ async def naive_query(
     global_config: dict[str, str],
     hashing_kv: BaseKVStorage | None = None,
     system_prompt: str | None = None,
+    text_chunks_db: BaseKVStorage | None = None,
     return_raw_data: Literal[False] = False,
 ) -> str | AsyncIterator[str]: ...
 
@@ -5554,6 +5719,7 @@ async def naive_query(
     global_config: dict[str, str],
     hashing_kv: BaseKVStorage | None = None,
     system_prompt: str | None = None,
+    text_chunks_db: BaseKVStorage | None = None,
 ) -> QueryResult | None:
     """
     Execute naive query and return unified QueryResult object.
@@ -5589,6 +5755,17 @@ async def naive_query(
         return QueryResult(content=PROMPTS["fail_response"])
 
     chunks = await _get_vector_context(query, chunks_vdb, query_param, None)
+
+    # Apply folder/doc filter if configured
+    if (
+        query_param.filter_doc_ids is not None
+        and text_chunks_db is not None
+    ):
+        chunks = await _filter_chunks_by_doc_ids(
+            chunks,
+            query_param.filter_doc_ids,
+            text_chunks_db,
+        )
 
     if chunks is None or len(chunks) == 0:
         logger.info(

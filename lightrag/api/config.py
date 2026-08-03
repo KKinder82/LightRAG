@@ -761,7 +761,7 @@ def parse_args() -> argparse.Namespace:
 # 调整 Uvicorn 模式下的 workers 配置，如果 workers > 1 则强制设置为 1，并记录日志警告用户
 def update_uvicorn_mode_config():
     # If in uvicorn mode and workers > 1, force it to 1 and log warning
-    if global_args.workers > 1:
+    if global_args.workers > 1:  #type: ignore
         original_workers = global_args.workers # 原始 workers 数量
         global_args.workers = 1
         # Log warning directly here
@@ -773,7 +773,6 @@ def update_uvicorn_mode_config():
 # Global configuration with lazy initialization
 _global_args = None
 _initialized = False
-
 
 # 初始化配置的
 def initialize_config(args=None, force=False):

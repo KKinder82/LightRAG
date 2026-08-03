@@ -989,7 +989,7 @@ def create_app(args):
         allow_headers=["*"],
         expose_headers=[
             "X-New-Token"
-        ],  # Expose token renewal header for cross-origin requests
+        ],  # Expappose token renewal header for cross-origin requests
     )
 
     # Create combined auth dependency for all endpoints
@@ -2006,6 +2006,7 @@ def create_app(args):
         "language": args.summary_language,
     }
 
+    #MARK: 创建 LLM
     role_llm_configs = {
         spec.name: {
             **resolve_role_llm_settings(spec.name),
@@ -2088,8 +2089,10 @@ def create_app(args):
         embedding_func=None,
     )
     folder_manager = FolderManager(folder_kv, rag.workspace)
+    rag.folder_manager = folder_manager  # attach to RAG for query-level folder filtering
 
     # Add routes
+    #IMPO: 文件管理
     app.include_router(create_document_routes(
             rag,
             doc_manager,
@@ -2097,6 +2100,7 @@ def create_app(args):
             folder_manager=folder_manager,
         )
     )
+    #IMPO: 文件夹管理
     app.include_router(create_folder_routes(rag, folder_manager, api_key))
 
     _log_role_provider_options(rag)
@@ -2111,14 +2115,17 @@ def create_app(args):
     # Add routes
     # root_path is set on the app for reverse proxy support;
     # routes stay at their natural paths and are prefixed by the proxy or uvicorn --root-path
+    # IMPO: 查询接口
     app.include_router(create_query_routes(rag, api_key, args.top_k))
     app.include_router(create_graph_routes(rag, api_key, folder_manager=folder_manager))
 
     # Add Ollama API routes
+    #IMPO: OLLama 接口
     ollama_api = OllamaAPI(rag, top_k=args.top_k, api_key=api_key)
     app.include_router(ollama_api.router, prefix="/api")
 
     # Custom Swagger UI endpoint for offline support
+    #IMPO: 帮助文档. 
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui_html(request: Request):
         """Custom Swagger UI HTML with local static files"""
@@ -2137,11 +2144,13 @@ def create_app(args):
         )
         return HTMLResponse(content=html)
 
+    #IMPO: OAuth2 访问 Swagger UI. 
     @app.get("/docs/oauth2-redirect", include_in_schema=False)
     async def swagger_ui_redirect():
         """OAuth2 redirect for Swagger UI"""
         return get_swagger_ui_oauth2_redirect_html()
 
+    #IMPO: 根
     @app.get("/")
     async def redirect_to_webui(request: Request):
         """Redirect root path based on WebUI availability.
@@ -2156,6 +2165,7 @@ def create_app(args):
         else:
             return RedirectResponse(url=f"{root}/docs")
 
+    #IMPO: 用户认证状态
     @app.get("/auth-status")
     async def get_auth_status():
         """Get authentication status and guest token if auth is not configured"""
@@ -2186,6 +2196,7 @@ def create_app(args):
             "webui_description": webui_description,
         }
 
+    #IMPO: 登录
     @app.post("/login")
     async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         if not auth_handler.accounts:
@@ -2221,6 +2232,7 @@ def create_app(args):
             "webui_description": webui_description,
         }
 
+    #IMPO: 健康检查
     @app.get(
         "/health",
         dependencies=[Depends(combined_auth)],
@@ -2277,6 +2289,8 @@ def create_app(args):
             }
         },
     )
+
+
     async def get_status(request: Request):
         """Get current system status including WebUI availability"""
         try:

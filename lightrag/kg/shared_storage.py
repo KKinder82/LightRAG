@@ -1510,6 +1510,7 @@ async def get_namespace_data(
                 raise PipelineNotInitializedError(final_namespace)
 
             # For other namespaces or when allow_create=True, create them dynamically
+            # MARK: 创建
             if _is_multiprocess and _manager is not None:
                 # Use Manager.dict() for shared dictionary in multiprocess mode
                 _shared_dicts[final_namespace] = _manager.dict()

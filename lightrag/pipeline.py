@@ -219,6 +219,7 @@ class _PipelineMixin:
         process_options: str | list[str] | None = None,
         chunk_options: dict | list[dict] | None = None,
         from_scan: bool = False,
+        folder_id: Optional[str] = None,
     ) -> str:
         # 串行加入文档自理队伍
         """
@@ -273,6 +274,11 @@ class _PipelineMixin:
                 result here; this function is intentionally chunker-
                 config agnostic.  See
                 ``docs/FileProcessingConfiguration-zh.md`` for the schema.
+            folder_id: 
+                #MARK: 目录 ID
+                Optional folder ID to tag the enqueued documents with.
+                Stored in ``doc_status.metadata['folder_id']`` for
+                folder-based filtering in the UI.
             from_scan: 
                 #MARK: 任务是否来至后台 scan 任务。
                 when True, the caller is the scan-owned background task
@@ -536,6 +542,8 @@ class _PipelineMixin:
             # so the per-doc parameters are frozen even when ``F``
             # (default) is used.
             content_data["chunk_options"] = _chunk_options_at(index)
+            if folder_id:
+                content_data["folder_id"] = folder_id
             #IMPO: 处理后的内容加入了 contents 字典，键是 doc_id，值是 content_data 包含内容、文件路径、格式、哈希等信息。
             contents[doc_id] = content_data
 
@@ -661,6 +669,11 @@ class _PipelineMixin:
             source_file_name = content_data.get("source_file_name")
             if source_file_name:
                 metadata["source_file_name"] = source_file_name
+            doc_folder_id = content_data.get("folder_id")
+            if doc_folder_id:
+                metadata["folder_ids"] = [doc_folder_id]
+                # Keep legacy field for backward compatibility during transition
+                metadata["folder_id"] = doc_folder_id
             if metadata:
                 base["metadata"] = metadata
             return base

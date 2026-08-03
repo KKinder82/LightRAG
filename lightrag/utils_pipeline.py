@@ -224,6 +224,7 @@ def doc_status_field(doc: Any, field: str, default: Any = "") -> Any:
 _DOC_STATUS_METADATA_CARRY_OVER_KEYS: tuple[str, ...] = (
     "process_options",
     "source_file_name",
+    "folder_ids",
     "folder_id",
     "parse_warnings",
     "chunk_opts",

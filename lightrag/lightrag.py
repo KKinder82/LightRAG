@@ -148,6 +148,7 @@ from lightrag.llm_roles import (
     _RoleLLMState,
 )
 from lightrag.storage_migrations import _StorageMigrationMixin
+from lightrag.kg.folder_storage import FolderManager
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each lightrag instance
@@ -160,6 +161,8 @@ load_dotenv(dotenv_path=".env", override=False)
 class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     """LightRAG: Simple and Fast Retrieval-Augmented Generation."""
 
+    folder_manager: FolderManager | None = field(default=None)
+    #MARK: 
     # Directory
     # ---
     #TODO: 工作目录
@@ -1656,14 +1659,14 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         #MARK: 解析分块选项
         chunk_opts = resolve_chunk_options(
-            self.addon_params,
+            self.addon_params, #type: ignore
             split_by_character=split_by_character,
             split_by_character_only=split_by_character_only,
         )
         # MARK: 入队文档进行处理，传入chunk_options以确保F-strategy的split_by_character等运行时参数被正确应用于每个文档
         await self.apipeline_enqueue_documents(
             input,
-            ids,
+            ids, #type: ignore
             file_paths,
             track_id,
             chunk_options=chunk_opts,
@@ -2125,6 +2128,41 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         else:
             return llm_response.get("content", "")
 
+    async def _resolve_folder_filter(self, param: QueryParam) -> None:
+        """Resolve folder_ids on the QueryParam to filter_doc_ids.
+
+        Expands folder IDs (and optionally sub-folder IDs) into a flat set of
+        document IDs using the doc_status storage.  The resolved set is stored
+        in ``param.filter_doc_ids`` so downstream query functions can filter
+        retrieval results to only those documents.
+        """
+        if not param.folder_ids:
+            return
+
+        folder_ids = list(param.folder_ids)
+        folder_mgr = getattr(self, "folder_manager", None)
+        if param.include_subfolders and folder_mgr is not None:
+            try:
+                expanded_set = set(folder_ids)
+                for fid in folder_ids:
+                    descendants = await folder_mgr.get_descendant_ids(fid)
+                    expanded_set.update(descendants)
+                folder_ids = list(expanded_set)
+            except Exception:
+                logger.warning(
+                    "Failed to expand sub-folders; using original folder list."
+                )
+
+        try:
+            doc_ids = await self.doc_status.get_doc_ids_by_folder_ids(folder_ids)
+            if doc_ids:
+                param.filter_doc_ids = set(doc_ids)
+            else:
+                # No docs in folder — force empty result by using a sentinel
+                param.filter_doc_ids = set()
+        except Exception as e:
+            logger.warning(f"Failed to resolve folder_ids to doc_ids: {e}")
+
     def query_data(
         self,
         query: str,
@@ -2257,6 +2295,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             actual data is nested under the 'data' field, with 'status' and 'message'
             fields at the top level.
         """
+        await self._resolve_folder_filter(param)
         global_config = self._build_global_config()
 
         # Create a copy of param to avoid modifying the original
@@ -2303,6 +2342,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 global_config,
                 hashing_kv=self.llm_response_cache,
                 system_prompt=None,
+                text_chunks_db=self.text_chunks,
             )
         elif data_param.mode == "bypass":
             logger.debug("[aquery_data] Using bypass mode")
@@ -2372,6 +2412,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             dict[str, Any]: Complete response with structured data and LLM response.
         """
         logger.debug(f"[aquery_llm] Query param: {param}")
+        await self._resolve_folder_filter(param)
 
         global_config = self._build_global_config()
 
@@ -2399,6 +2440,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     global_config,
                     hashing_kv=self.llm_response_cache,
                     system_prompt=system_prompt,
+                    text_chunks_db=self.text_chunks,
                 )
             elif param.mode == "bypass":
                 # Bypass mode: directly use LLM without knowledge retrieval

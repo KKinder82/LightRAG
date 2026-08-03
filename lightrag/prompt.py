@@ -698,14 +698,18 @@ class EntityExtractionPromptProfile(TypedDict):
     entity_extraction_json_examples: list[str]
 
 
+#MARK: 获取默认的实体提取提示配置文件
 def get_default_entity_extraction_prompt_profile() -> EntityExtractionPromptProfile:
     """Return a copy of the built-in entity extraction prompt profile."""
 
     return {
+        #MARK: 获取默认的实体类型向导
         "entity_types_guidance": PROMPTS["default_entity_types_guidance"].rstrip(),
+        #MARK: 获取默认的实体提取提示配置文件
         "entity_extraction_examples": [
             example.rstrip() for example in PROMPTS["entity_extraction_examples"]
         ],
+        #MARK: 获取默认的实体提取JSON提示配置文件
         "entity_extraction_json_examples": [
             example.rstrip() for example in PROMPTS["entity_extraction_json_examples"]
         ],

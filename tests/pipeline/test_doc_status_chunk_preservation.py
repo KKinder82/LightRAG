@@ -429,6 +429,7 @@ async def test_merge_failure_preserves_chunks_and_skip_cache_cleanup_when_disabl
         async def fail_merge(**kwargs):
             raise RuntimeError("merge fail sentinel")
 
+        #MARK: 动态绑定方法，替换 rag._process_extract_entities 为 ok_extract
         rag._process_extract_entities = MethodType(ok_extract, rag)
         monkeypatch.setattr(pipeline_module, "merge_nodes_and_edges", fail_merge)
 

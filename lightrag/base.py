@@ -166,12 +166,17 @@ class QueryParam:
     from descendant sub-folders.
     """
 
+    filter_doc_ids: set[str] | None = None
+    """Internal: resolved document IDs to filter retrieval results.
+    Populated by LightRAG before query execution. Not set by API callers.
+    """
+
 
 @dataclass
 class StorageNameSpace(ABC):
     namespace: str  # 名字
     workspace: str  # 工作空间
-    global_config: dict[str, Any]
+    global_config: dict[str, Any] #MARK: 配置信息
 
     async def initialize(self):
         """Initialize the storage"""
@@ -185,6 +190,7 @@ class StorageNameSpace(ABC):
     async def index_done_callback(self) -> None:
         """Commit the storage operations after indexing"""
 
+    #MARK: 统一清空方法
     @abstractmethod
     async def drop(self) -> dict[str, str]:
         """Drop all data from storage and clean up resources
@@ -212,6 +218,7 @@ class StorageNameSpace(ABC):
         """
 
 
+#MARK: 向量存储(实体, 关系)
 @dataclass
 class BaseVectorStorage(StorageNameSpace, ABC):
     embedding_func: EmbeddingFunc
@@ -252,13 +259,13 @@ class BaseVectorStorage(StorageNameSpace, ABC):
         # embedding_dim is required in EmbeddingFunc
         embedding_dim = self.embedding_func.embedding_dim
 
-        # Generate suffix: clean model name and append dimension
+        # Generate suffix: clean model name and append dimension 把除字母,数字,_的字符,统统改为 _
         safe_model_name = re.sub(r"[^a-zA-Z0-9_]", "_", model_name.lower())
         return f"{safe_model_name}_{embedding_dim}d"
 
     @abstractmethod
     async def query(
-        self, query: str, top_k: int, query_embedding: list[float] = None
+        self, query: str, top_k: int, query_embedding: list[float] | None = None
     ) -> list[dict[str, Any]]:
         """Query the vector storage and retrieve top_k results.
 
@@ -371,6 +378,7 @@ class BaseVectorStorage(StorageNameSpace, ABC):
         pass
 
 
+#MARK: 键值存储
 @dataclass
 class BaseKVStorage(StorageNameSpace, ABC):
     embedding_func: EmbeddingFunc
@@ -433,7 +441,7 @@ class BaseKVStorage(StorageNameSpace, ABC):
             bool: True if storage contains no data, False otherwise
         """
 
-
+#MARK: 图存储
 @dataclass
 class BaseGraphStorage(StorageNameSpace, ABC):
     """All operations related to edges in graph should be undirected."""
@@ -781,7 +789,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
             List of matching labels sorted by relevance
         """
 
-
+#MARK: 文件目录信息. 
 @dataclass
 class FolderInfo:
     """Document folder data structure for multi-level folder management."""
@@ -804,6 +812,20 @@ class FolderInfo:
     """Extension fields"""
 
 
+def _folder_ids_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
+    """Extract folder IDs from metadata with backward compat for legacy folder_id."""
+    if not isinstance(metadata, dict):
+        return []
+    ids = metadata.get("folder_ids")
+    if isinstance(ids, list):
+        return [str(fid) for fid in ids if fid]
+    single = metadata.get("folder_id")
+    if isinstance(single, str) and single:
+        return [single]
+    return []
+
+
+#MARK: 文档状态(枚举)
 class DocStatus(str, Enum):
     """Document processing status.
     Pipeline order: PENDING -> PARSING -> ANALYZING (optional) -> PROCESSING -> PROCESSED | FAILED.
@@ -819,6 +841,7 @@ class DocStatus(str, Enum):
     FAILED = "failed"
 
 
+#MARK: 处理文档的的状态信息()
 @dataclass
 class DocProcessingStatus:
     """Document processing status data structure"""
@@ -878,6 +901,7 @@ class DocProcessingStatus:
                 self.status = DocStatus.PREPROCESSED
 
 
+#MARK: 文档状态(数据库)
 @dataclass
 class DocStatusStorage(BaseKVStorage, ABC):
     """Base class for document status storage"""
@@ -995,7 +1019,8 @@ class DocStatusStorage(BaseKVStorage, ABC):
                 sort_direction=sort_direction,
             )
             for doc_id, doc in batch:
-                if doc.metadata.get("folder_id") in folder_id_set:
+                doc_folder_ids = _folder_ids_from_metadata(doc.metadata)
+                if any(fid in folder_id_set for fid in doc_folder_ids):
                     all_matching.append((doc_id, doc))
             if len(batch) < batch_size:
                 break
@@ -1027,7 +1052,8 @@ class DocStatusStorage(BaseKVStorage, ABC):
                 status_filter=None, page=cur_page, page_size=batch_size
             )
             for doc_id, doc in batch:
-                if doc.metadata.get("folder_id") in folder_id_set:
+                doc_folder_ids = _folder_ids_from_metadata(doc.metadata)
+                if any(fid in folder_id_set for fid in doc_folder_ids):
                     result.append(doc_id)
             if len(batch) < batch_size:
                 break
@@ -1051,7 +1077,8 @@ class DocStatusStorage(BaseKVStorage, ABC):
                 status_filter=None, page=cur_page, page_size=batch_size
             )
             for doc_id, doc in batch:
-                if doc.metadata.get("folder_id") in folder_id_set:
+                doc_folder_ids = _folder_ids_from_metadata(doc.metadata)
+                if any(fid in folder_id_set for fid in doc_folder_ids):
                     counts[doc.status.value] += 1
             if len(batch) < batch_size:
                 break
@@ -1091,7 +1118,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """
 
 
-
+#MARK: (枚举) 存储状态
 class StoragesStatus(str, Enum):
     """Storages status"""
 
@@ -1101,6 +1128,7 @@ class StoragesStatus(str, Enum):
     FINALIZED = "finalized"
 
 
+#MARK: 删除结果
 @dataclass
 class DeletionResult:
     """Represents the result of a deletion operation."""
@@ -1113,8 +1141,7 @@ class DeletionResult:
 
 
 # Unified Query Result Data Structures for Reference List Support
-
-
+#MARK: 统一查询结果
 @dataclass
 class QueryResult:
     """
@@ -1128,10 +1155,11 @@ class QueryResult:
     """
 
     content: Optional[str] = None
-    response_iterator: Optional[AsyncIterator[str]] = None
-    raw_data: Optional[Dict[str, Any]] = None
+    response_iterator: Optional[AsyncIterator[str]] = None #MARK: 
+    raw_data: Optional[Dict[str, Any]] = None #MARK: 原始数据
     is_streaming: bool = False
 
+    #MARK: 参考数据
     @property
     def reference_list(self) -> List[Dict[str, str]]:
         """
@@ -1145,6 +1173,7 @@ class QueryResult:
             return self.raw_data.get("data", {}).get("references", [])
         return []
 
+    #MARK: 元数据
     @property
     def metadata(self) -> Dict[str, Any]:
         """

@@ -962,7 +962,7 @@ async def test_upload_rejects_same_name_failed_doc_status_without_full_docs(
     # rather than returning a "duplicated" 200 response.  Clients must delete
     # the existing record before re-uploading.
     with pytest.raises(_document_routes.HTTPException) as excinfo:
-        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file)
+        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file, None)
     assert excinfo.value.status_code == 409
     assert "failed.docx" in excinfo.value.detail
     assert "Status: failed" in excinfo.value.detail
@@ -990,7 +990,7 @@ async def test_upload_rejects_parser_hinted_filesystem_duplicate(tmp_path, monke
     # Strict name pre-check: an INPUT directory file with the same canonical
     # basename now blocks the upload with 409.
     with pytest.raises(_document_routes.HTTPException) as excinfo:
-        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file)
+        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file, None)
     assert excinfo.value.status_code == 409
     assert "existing.docx" in excinfo.value.detail
     assert not (tmp_path / "existing.[native].docx").exists()
@@ -1032,7 +1032,7 @@ async def test_upload_succeeds_concurrent_with_pipeline_busy(tmp_path, monkeypat
     )
 
     bg = _document_routes.BackgroundTasks()
-    response = await upload_endpoint(bg, upload_file)
+    response = await upload_endpoint(bg, upload_file,None)
 
     # Endpoint accepted the upload despite busy=True.
     assert response.status == "success"
@@ -1078,7 +1078,7 @@ async def test_upload_returns_409_when_scanning_classification(tmp_path, monkeyp
     )
 
     with pytest.raises(_document_routes.HTTPException) as excinfo:
-        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file)
+        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file, None)
     assert excinfo.value.status_code == 409
     assert "classifying" in excinfo.value.detail.lower()
     assert not (tmp_path / "while_scanning.docx").exists()
@@ -1122,7 +1122,7 @@ async def test_upload_succeeds_during_scan_processing_phase(tmp_path, monkeypatc
     )
 
     bg = _document_routes.BackgroundTasks()
-    response = await upload_endpoint(bg, upload_file)
+    response = await upload_endpoint(bg, upload_file,None)
 
     # Endpoint accepted the upload despite scan in progress.
     assert response.status == "success"
@@ -1398,13 +1398,13 @@ async def test_two_concurrent_uploads_both_succeed_when_pipeline_busy(
 
     bg_a = _document_routes.BackgroundTasks()
     upload_a = _document_routes.UploadFile(filename="a.docx", file=BytesIO(b"a bytes"))
-    response_a = await upload_endpoint(bg_a, upload_a)
+    response_a = await upload_endpoint(bg_a, upload_a,None)
     assert response_a.status == "success"
     assert pipeline_status["pending_enqueues"] == 1
 
     bg_b = _document_routes.BackgroundTasks()
     upload_b = _document_routes.UploadFile(filename="b.docx", file=BytesIO(b"b bytes"))
-    response_b = await upload_endpoint(bg_b, upload_b)
+    response_b = await upload_endpoint(bg_b, upload_b,None)
     assert response_b.status == "success"
     # Both reservations coexist while bg tasks are pending.
     assert pipeline_status["pending_enqueues"] == 2

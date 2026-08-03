@@ -48,7 +48,7 @@ class RoleSpec:
     queue_name: str
     """Display name passed to ``priority_limit_async_func_call`` for log lines."""
 
-
+# extract, keyword, query, vlm
 ROLES: tuple[RoleSpec, ...] = (
     RoleSpec("extract", "EXTRACT", "extract LLM func"),
     RoleSpec("keyword", "KEYWORD", "keyword LLM func"),

@@ -686,12 +686,13 @@ def get_llm_cache_identity(
     to persist.
     """
     config = global_config or {}
+    #MARK: 从配置中获取. 
     identities = config.get("llm_cache_identities")
     if isinstance(identities, dict):
         identity = identities.get(role)
         if isinstance(identity, dict):
             return dict(identity)
-
+    # 如果配置中没, 则返回默认的. 
     return {
         "role": role,
         "binding": None,
@@ -1713,13 +1714,15 @@ class TiktokenTokenizer(Tokenizer):
                 "tiktoken is not installed. Please install it with `pip install tiktoken` or define custom `tokenizer_func`."
             )
 
+        # Fallback to network download
         try:
             tokenizer = tiktoken.encoding_for_model(model_name)
-            super().__init__(model_name=model_name, tokenizer=tokenizer)
         except KeyError:
             raise ValueError(f"Invalid model_name: {model_name}.")
 
+        super().__init__(model_name=model_name, tokenizer=tokenizer)
 
+#MARK: 根据用户和助手的对话内容打包成OpenAI消息格式
 def pack_user_ass_to_openai_messages(*args: str):
     roles = ["user", "assistant"]
     return [
@@ -1922,7 +1925,7 @@ def cosine_similarity(v1, v2):
     norm2 = np.linalg.norm(v2)
     return dot_product / (norm1 * norm2)
 
-
+#MARK: 自理缓冲. 
 async def handle_cache(
     hashing_kv,
     args_hash,
@@ -2490,6 +2493,7 @@ async def update_chunk_cache_list(
         )
 
 
+#MARK: 清理文本中的 <think> 标签及其内容
 def remove_think_tags(text: str) -> str:
     """Remove <think>...</think> tags and their content from the text.
 
@@ -2505,11 +2509,11 @@ def remove_think_tags(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     return text.strip()
 
-
+#MARK: 调用LLM函数，带缓存支持和文本清理
 async def use_llm_func_with_cache(
-    user_prompt: str,
-    use_llm_func: callable,
-    llm_response_cache: "BaseKVStorage | None" = None,
+    user_prompt: str, # MARK: 用户输入的文本
+    use_llm_func: callable, # MARK: LLM函数，优先级更高 
+    llm_response_cache: "BaseKVStorage | None" = None, 
     system_prompt: str | None = None,
     max_tokens: int | None = None,
     history_messages: list[dict[str, str]] = None,
@@ -2584,6 +2588,7 @@ async def use_llm_func_with_cache(
         history = None
 
     if llm_response_cache:
+        #MARK: 生成缓存键和缓存处理
         prompt_parts = []
         if safe_user_prompt:
             prompt_parts.append(safe_user_prompt)
@@ -2613,6 +2618,7 @@ async def use_llm_func_with_cache(
             cache_type=cache_type,
         )
         if cached_result:
+            #MARK: 缓存命中，直接返回缓存结果
             content, timestamp = cached_result
             logger.debug(f"Found cache for {arg_hash}")
             statistic_data["llm_cache"] += 1
@@ -2622,6 +2628,7 @@ async def use_llm_func_with_cache(
                 cache_keys_collector.append(cache_key)
 
             return content, timestamp
+        #MARK: 缓存未命中，调用LLM函数
         statistic_data["llm_call"] += 1
 
         # Call LLM with sanitized input
@@ -2636,13 +2643,14 @@ async def use_llm_func_with_cache(
         res: str = await use_llm_func(
             safe_user_prompt, system_prompt=safe_system_prompt, **kwargs
         )
-
+        #MARK: 清理文本中的 <think> 标签及其内容
         res = remove_think_tags(res)
 
         # Generate timestamp for cache miss (LLM call completion time)
         current_timestamp = int(time.time())
 
         if llm_response_cache.global_config.get("enable_llm_cache_for_entity_extract"):
+            #MARK: 保存结果到缓存
             await save_to_cache(
                 llm_response_cache,
                 CacheData(
@@ -2660,6 +2668,7 @@ async def use_llm_func_with_cache(
 
         return res, current_timestamp
 
+    #MARK: 不使用缓冲. 
     # When cache is disabled, directly call LLM with sanitized input
     kwargs = {}
     if safe_history_messages:

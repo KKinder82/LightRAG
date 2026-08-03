@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from lightrag.kg import STORAGES
 
-
+#MARK: 类型名称字符串 -> 类型. 
 def get_storage_class(storage_name: str) -> Callable[..., Any]:
     """Return the storage backend class for ``storage_name``."""
     if storage_name == "JsonKVStorage":

@@ -27,6 +27,20 @@ from .shared_storage import (
 )
 
 
+def _get_folder_ids_from_doc_data(doc_data: dict[str, Any]) -> list[str]:
+    """Extract folder IDs from doc data with backward compat for single folder_id."""
+    meta = doc_data.get("metadata") or {}
+    if not isinstance(meta, dict):
+        return []
+    ids = meta.get("folder_ids")
+    if isinstance(ids, list):
+        return [str(fid) for fid in ids if fid]
+    single = meta.get("folder_id")
+    if isinstance(single, str) and single:
+        return [single]
+    return []
+
+
 @final
 @dataclass
 class JsonDocStatusStorage(DocStatusStorage):
@@ -516,9 +530,9 @@ class JsonDocStatusStorage(DocStatusStorage):
 
         async with self._storage_lock:
             for doc_id, doc_data in self._data.items():
-                # Apply folder filter
-                doc_folder_id = doc_data.get("metadata", {}).get("folder_id")
-                if doc_folder_id not in folder_id_set:
+                # Apply folder filter — check folder_ids list for backward compat
+                doc_folder_ids = _get_folder_ids_from_doc_data(doc_data)
+                if not any(fid in folder_id_set for fid in doc_folder_ids):
                     continue
 
                 # Apply status filter
@@ -576,8 +590,9 @@ class JsonDocStatusStorage(DocStatusStorage):
         result: list[str] = []
         async with self._storage_lock:
             for doc_id, doc_data in self._data.items():
-                doc_folder_id = doc_data.get("metadata", {}).get("folder_id")
-                if doc_folder_id in folder_id_set:
+                doc_folder_ids = _get_folder_ids_from_doc_data(doc_data)
+                if any(fid in folder_id_set for fid in doc_folder_ids):
+                    result.append(doc_id)
                     result.append(doc_id)
         return result
 
@@ -589,8 +604,8 @@ class JsonDocStatusStorage(DocStatusStorage):
         counts = {status.value: 0 for status in DocStatus}
         async with self._storage_lock:
             for doc_data in self._data.values():
-                doc_folder_id = doc_data.get("metadata", {}).get("folder_id")
-                if doc_folder_id in folder_id_set:
+                doc_folder_ids = _get_folder_ids_from_doc_data(doc_data)
+                if any(fid in folder_id_set for fid in doc_folder_ids):
                     counts[doc_data["status"]] += 1
         return counts
 
