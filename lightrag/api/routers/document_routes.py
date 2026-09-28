@@ -911,7 +911,7 @@ class DocumentsRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "status_filters": ["PREPROCESSED", "PARSING", "ANALYZING"],
+                "status_filters": ["preprocessed", "parsing", "analyzing"],
                 "page": 1,
                 "page_size": 50,
                 "sort_field": "updated_at",

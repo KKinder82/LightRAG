@@ -329,3 +329,13 @@ async def test_folder_workflow_over_http_persists_original_document_ids(rig, tmp
         assert doc["chunks_list"] == [f"chunk-{doc_id}"]
     assert rig.status["pending_enqueues"] == 0
     assert not rig.status["busy"]
+
+
+def test_document_pagination_openapi_example_is_valid():
+    example = routes.DocumentsRequest.model_json_schema()["example"]
+    request = routes.DocumentsRequest.model_validate(example)
+    assert request.status_filters == [
+        routes.DocStatus.PREPROCESSED,
+        routes.DocStatus.PARSING,
+        routes.DocStatus.ANALYZING,
+    ]

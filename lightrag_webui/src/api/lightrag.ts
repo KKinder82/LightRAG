@@ -1376,3 +1376,24 @@ export const listProjects = async (): Promise<ProjectDataset[]> => (await axiosI
 export const createProject = async (name: string): Promise<ProjectDataset> => (await axiosInstance.post('/projects', { name })).data
 
 export const getDeletionJobs = async (): Promise<Record<string, { status: string }>> => (await axiosInstance.get('/documents/deletion_jobs')).data
+
+/** Fetch folder counts using the smallest page supported by the server. */
+export const getFolderDocumentCounts = async (folderId: string): Promise<{
+  directFileCount: number
+  totalFileCount: number
+}> => {
+  const responses = await Promise.all([false, true].map(includeSubfolders =>
+    getDocumentsPaginatedWithTimeout({
+      folder_id: folderId,
+      include_subfolders: includeSubfolders,
+      page: 1,
+      page_size: 10,
+      sort_field: 'updated_at',
+      sort_direction: 'desc'
+    })
+  ))
+  return {
+    directFileCount: responses[0].pagination.total_count,
+    totalFileCount: responses[1].pagination.total_count
+  }
+}

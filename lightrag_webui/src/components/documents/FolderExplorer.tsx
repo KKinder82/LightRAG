@@ -34,7 +34,7 @@ import {
   createFolder,
   deleteFolder,
   updateFolder,
-  getDocumentsPaginatedWithTimeout,
+  getFolderDocumentCounts,
 } from '@/api/lightrag'
 import { errorMessage } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -460,21 +460,12 @@ export default function FolderExplorer({
       return next
     })
     try {
-      const [directResp, totalResp] = await Promise.all([
-        getDocumentsPaginatedWithTimeout({
-          folder_id: folderId, include_subfolders: false,
-          page: 1, page_size: 1, sort_field: 'updated_at', sort_direction: 'desc',
-        }),
-        getDocumentsPaginatedWithTimeout({
-          folder_id: folderId, include_subfolders: true,
-          page: 1, page_size: 1, sort_field: 'updated_at', sort_direction: 'desc',
-        }),
-      ])
+      const counts = await getFolderDocumentCounts(folderId)
       setStatsCache((prev) => {
         const next = new Map(prev)
         next.set(folderId, {
-          directFileCount: directResp.pagination?.total_count ?? 0,
-          totalFileCount: totalResp.pagination?.total_count ?? 0,
+          directFileCount: counts.directFileCount,
+          totalFileCount: counts.totalFileCount,
         })
         return next
       })

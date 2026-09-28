@@ -240,3 +240,33 @@ describe('getDocumentsPaginated', () => {
     })
   })
 })
+
+
+describe('getFolderDocumentCounts', () => {
+  test('uses valid pages and reports total counts rather than page lengths', async () => {
+    const requests: Array<Parameters<LightragApiModule['getDocumentsPaginated']>[0]> = []
+    apiModule.__setPaginatedDocumentsPostForTests(async request => {
+      requests.push(request)
+      if (request.page_size < 10 || request.page_size > 200) {
+        throw new Error('HTTP 422: invalid page_size')
+      }
+      return {
+        documents: [],
+        pagination: {
+          page: 1, page_size: request.page_size,
+          total_count: request.include_subfolders ? 42 : 17,
+          total_pages: request.include_subfolders ? 5 : 2,
+          has_next: true, has_prev: false
+        },
+        status_counts: {}
+      }
+    })
+    expect(await apiModule.getFolderDocumentCounts('folder-a')).toEqual({
+      directFileCount: 17,
+      totalFileCount: 42
+    })
+    expect(requests).toHaveLength(2)
+    expect(requests.every(request => request.folder_id === 'folder-a')).toBe(true)
+    expect(requests.map(request => request.include_subfolders)).toEqual([false, true])
+  })
+})
