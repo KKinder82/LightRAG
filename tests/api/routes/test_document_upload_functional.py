@@ -246,3 +246,62 @@ async def test_invalid_native_heading_does_not_break_later_uploads(upload_app):
     docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
     assert len(docs) == 1
     assert next(iter(docs.values())).status.value == "processed"
+
+
+@pytest.mark.parametrize("suffix,format", [("png", "PNG"), ("jpg", "JPEG"), ("pdf", "PDF")])
+async def test_vlm_ocr_upload_reaches_processed(upload_app, monkeypatch, suffix, format):
+    from PIL import Image, ImageDraw
+    from unittest.mock import AsyncMock
+    import shutil
+
+    if suffix == "pdf" and not shutil.which("pdftoppm"):
+        pytest.skip("Poppler is required to exercise real scanned-PDF rendering")
+    client, rag, folder, _ = upload_app
+    monkeypatch.setenv("LIGHTRAG_OCR_ENGINE", "vlm")
+    rag.vlm_process_enable = True
+    vlm = AsyncMock(return_value="Alice works at Example Labs. OCR invoice 7391.")
+    rag.update_llm_role_config("vlm", model_func=vlm)
+    image = Image.new("RGB", (500, 150), "white")
+    ImageDraw.Draw(image).text((20, 40), "OCR invoice 7391", fill="black")
+    stream = BytesIO()
+    image.save(stream, format=format)
+    response = await client.post(
+        "/documents/upload",
+        files={"file": (f"scan.{suffix}", stream.getvalue())},
+        data={"folder_id": folder.id, "fast_index": "true"},
+    )
+    assert response.status_code == 200, response.text
+    docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
+    doc_id, doc = next(iter(docs.items()))
+    assert doc.status.value == "processed", doc.error_msg
+    assert folder.id in doc.metadata["folder_ids"]
+    assert "7391" in (await rag.full_docs.get_by_id(doc_id))["content"]
+    assert doc.chunks_list
+    vlm.assert_awaited_once()
+
+
+async def test_vlm_failure_is_visible_and_later_upload_recovers(upload_app, monkeypatch):
+    from PIL import Image
+    from unittest.mock import AsyncMock
+
+    client, rag, folder, _ = upload_app
+    monkeypatch.setenv("LIGHTRAG_OCR_ENGINE", "vlm")
+    rag.vlm_process_enable = True
+    rag.update_llm_role_config("vlm", model_func=AsyncMock(side_effect=RuntimeError("OCR unavailable")))
+    stream = BytesIO()
+    Image.new("RGB", (40, 40)).save(stream, format="PNG")
+    response = await client.post(
+        "/documents/upload", files={"file": ("broken-ocr.png", stream.getvalue())},
+        data={"folder_id": folder.id},
+    )
+    docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
+    doc = next(iter(docs.values()))
+    assert doc.status.value == "failed"
+    assert "OCR unavailable" in doc.error_msg
+    assert folder.id in doc.metadata["folder_ids"]
+    response = await client.post(
+        "/documents/upload", files={"file": ("after-ocr.txt", b"A valid later document.")},
+        data={"fast_index": "true"},
+    )
+    docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
+    assert next(iter(docs.values())).status.value == "processed"

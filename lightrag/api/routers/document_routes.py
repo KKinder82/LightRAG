@@ -27,6 +27,7 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from lightrag.parser.office_ocr import extract_legacy_or_image
+from lightrag.parser.visual_ocr import extract_visual_document
 from lightrag import LightRAG
 from lightrag.base import DeletionResult, DocProcessingStatus, DocStatus
 from lightrag.constants import (
@@ -2230,7 +2231,7 @@ async def pipeline_enqueue_file(
                         #RET:
                         return False, track_id
 
-                case ".doc" | ".ppt" | ".xls" | ".png" | ".jpg" | ".jpeg" | ".bmp" | ".tif" | ".tiff" | ".webp":
+                case ".doc" | ".ppt" | ".xls":
                     if not hasattr(rag, "_office_ocr_slots"):
                         rag._office_ocr_slots = asyncio.Semaphore(max(1, rag.max_parallel_parse_native))
                     async with rag._office_ocr_slots:
@@ -2239,31 +2240,10 @@ async def pipeline_enqueue_file(
                             {"docx": _extract_docx, "pptx": _extract_pptx, "xlsx": _extract_xlsx},
                         )
 
-                case ".pdf":
-                    #MARK: PDF文件，使用pypdf提取文本（支持加密PDF）
-                    try:
-                        content = await asyncio.to_thread(
-                            _extract_pdf_pypdf,
-                            file,
-                            global_args.pdf_decrypt_password,
-                        )
-                    except Exception as e:
-                        error_files = [
-                            {
-                                "file_path": str(file_path.name),
-                                "error_description": "[File Extraction]PDF processing error",
-                                "original_error": f"Failed to extract text from PDF: {str(e)}",
-                                "file_size": file_size,
-                            }
-                        ]
-                        await _record_upload_errors(
-                            error_files, track_id
-                        )
-                        logger.error(
-                            f"[File Extraction]Error processing PDF {file_path.name}: {str(e)}"
-                        )
-                        #RET:
-                        return False, track_id
+                case ".pdf" | ".png" | ".jpg" | ".jpeg" | ".bmp" | ".tif" | ".tiff" | ".webp":
+                    content = await extract_visual_document(
+                        rag, file, ext, global_args.pdf_decrypt_password,
+                    )
 
                 case ".docx":
                     #MARK: DOCX文件，使用python-docx提取文本和表格内容（表格转换为制表符分隔的文本）

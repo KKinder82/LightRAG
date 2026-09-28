@@ -92,6 +92,7 @@ api = [
     "openpyxl>=3.0.0,<4.0.0",      # XLSX processing
     "pycryptodome>=3.0.0,<4.0.0",  # PDF encryption support
     "pypdf>=6.1.0",                 # PDF processing
+    "pillow>=10.0.0",  # Image decoding, orientation and VLM OCR normalization
     "python-docx>=0.8.11,<2.0.0",  # DOCX processing
     "python-pptx>=0.6.21,<2.0.0",  # PPTX processing
     "defusedxml>=0.7.0,<1.0.0",    # Safer XML parser used by parser/docx

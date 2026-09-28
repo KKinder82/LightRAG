@@ -72,7 +72,7 @@ FROM python:3.12-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        libreoffice-writer libreoffice-impress libreoffice-calc \
-       tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \
+       poppler-utils tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \
        fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
