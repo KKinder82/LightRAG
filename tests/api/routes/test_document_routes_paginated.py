@@ -33,6 +33,9 @@ def _doc(status: DocStatus, suffix: str) -> DocProcessingStatus:
 
 
 class _FakeDocStatusStorage:
+    get_docs_by_folder_ids = DocStatusStorage.get_docs_by_folder_ids
+    get_status_counts_by_folder_ids = DocStatusStorage.get_status_counts_by_folder_ids
+
     def __init__(self):
         self.docs = {
             "processed-doc": _doc(DocStatus.PROCESSED, "processed"),
@@ -117,3 +120,27 @@ def test_documents_paginated_status_filters_override_status_filter():
         "parsing-doc",
         "analyzing-doc",
     ]
+
+
+def test_folder_documents_paginated_applies_multiple_statuses():
+    storage = _FakeDocStatusStorage()
+    for doc in storage.docs.values():
+        doc.metadata = {"folder_ids": ["folder-a"]}
+    app = FastAPI()
+    app.include_router(
+        create_document_routes(
+            SimpleNamespace(doc_status=storage), SimpleNamespace(),
+            api_key="test-key", folder_manager=SimpleNamespace(),
+        )
+    )
+    response = TestClient(app).post(
+        "/documents/paginated", headers=_headers,
+        json={
+            "folder_id": "folder-a", "include_subfolders": False,
+            "status_filter": "processed", "status_filters": ["parsing", "analyzing"],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pagination"]["total_count"] == 2
+    assert {doc["id"] for doc in payload["documents"]} == {"parsing-doc", "analyzing-doc"}

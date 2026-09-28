@@ -65,7 +65,9 @@ export default function DeleteDocumentsDialog({ selectedDocIds, onDocumentsDelet
     try {
       const result = await deleteDocuments(selectedDocIds, deleteFile, deleteLLMCache)
 
-      if (result.status === 'deletion_started') {
+      if (result.status === 'deletion_queued') {
+        toast.success(t('dataset.deletionQueued'))
+      } else if (result.status === 'deletion_started') {
         toast.success(t('documentPanel.deleteDocuments.success', { count: selectedDocIds.length }))
       } else if (result.status === 'busy') {
         toast.error(t('documentPanel.deleteDocuments.busy'))

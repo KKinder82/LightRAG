@@ -219,7 +219,8 @@ class _PipelineMixin:
         process_options: str | list[str] | None = None,
         chunk_options: dict | list[dict] | None = None,
         from_scan: bool = False,
-        folder_id: Optional[str] = None,
+        folder_id: str | None = None,
+        allow_duplicate_content: bool = False,
     ) -> str:
         # 串行加入文档自理队伍
         """
@@ -497,7 +498,7 @@ class _PipelineMixin:
                 )
                 return
 
-            if content_hash and content_hash in content_hash_to_doc_id:
+            if not allow_duplicate_content and content_hash and content_hash in content_hash_to_doc_id:
                 # 如果内容哈希已存在，则视为重复，记录重复尝试并跳过后续处理
                 duplicate_attempts.append(
                     {
@@ -661,6 +662,8 @@ class _PipelineMixin:
             
             #MARK: 处理选项和源文件名等元信息，存储在 metadata 中，以便后续处理和 UI 展示。
             metadata: dict[str, Any] = {}
+            if allow_duplicate_content:
+                metadata["allow_duplicate_content"] = True
             options_str = content_data.get("process_options") or ""
             if options_str:
                 # Mirror process_options into doc_status.metadata so admin UIs
@@ -739,7 +742,7 @@ class _PipelineMixin:
                 # 3b. Content-hash dedup: different filename but same body still dupes.
                 # 注意 content_hash 可能不存在（例如 pending_parse 或 lightrag 格式），只有在存在时才进行内容哈希的重复检查。
                 content_hash = content_data.get("content_hash")
-                if not content_hash:
+                if allow_duplicate_content or not content_hash:
                     # 如果没有 content_hash，无法进行内容哈希去重，直接跳过内容哈希检查。
                     continue
                 hash_match = await get_existing_doc_by_content_hash(
@@ -897,6 +900,7 @@ class _PipelineMixin:
                 doc_id: {
                     "content": contents[doc_id].get("content", ""),  # MARK: contents 中的内容数据，
                     "file_path": contents[doc_id]["file_path"],
+                    "allow_duplicate_content": allow_duplicate_content,
                     "parse_format": contents[doc_id].get(
                         "parse_format", FULL_DOCS_FORMAT_RAW
                     ),
@@ -971,6 +975,7 @@ class _PipelineMixin:
                 - error_description: Brief error description (for content_summary)
                 - original_error: Full error message (for error_msg)
                 - file_size: File size in bytes (for content_length, 0 if unknown)
+                - folder_id: Optional folder association to retain on failure
             track_id: Optional tracking ID for grouping related operations
 
         Returns:
@@ -1001,6 +1006,11 @@ class _PipelineMixin:
             # Generate unique doc_id with "error-" prefix
             doc_id_content = f"{file_path}-{error_description}"
             doc_id = compute_mdhash_id(doc_id_content, prefix="error-")
+            metadata: dict[str, Any] = {"error_type": "file_extraction_error"}
+            folder_id = error_file.get("folder_id")
+            if folder_id:
+                metadata["folder_id"] = folder_id
+                metadata["folder_ids"] = [folder_id]
 
             error_docs[doc_id] = {
                 "status": DocStatus.FAILED,
@@ -1013,9 +1023,7 @@ class _PipelineMixin:
                 "updated_at": current_time,
                 "file_path": file_path,
                 "track_id": track_id,
-                "metadata": {
-                    "error_type": "file_extraction_error",
-                },
+                "metadata": metadata,
             }
 
         # Store error documents in doc_status
@@ -3143,7 +3151,11 @@ class _PipelineMixin:
         pipeline_status_lock: asyncio.Lock | None = None,
     ) -> bool:
         """Mark post-parse content duplicates and stop further processing."""
-        if not content_hash:
+        if (
+            not content_hash
+            or (content_data or {}).get("allow_duplicate_content")
+            or (doc_status_field(status_doc, "metadata", {}) or {}).get("allow_duplicate_content")
+        ):
             return False
 
         match = await get_duplicate_doc_by_content_hash(

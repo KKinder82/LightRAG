@@ -6,15 +6,14 @@ ABOUTME: Extracts automatic numbering, splits by headings, converts tables to JS
 
 import json
 import sys
+from typing import NoReturn
 
 try:
     from docx import Document
-except ImportError:
-    print(
-        "Error: python-docx not installed. Run: pip install python-docx",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+except ImportError as exc:
+    raise ImportError(
+        "python-docx not installed. Run: pip install python-docx"
+    ) from exc
 
 from lightrag.parser._markdown import (
     render_heading_line,
@@ -61,22 +60,13 @@ _SKIP_COMMENT_TAGS = frozenset(
 _SKIP_PARAGRAPH_TAGS = _SKIP_REVISION_TAGS | _SKIP_COMMENT_TAGS
 
 
-def print_error(title: str, details: str, solution: str):
-    """
-    Print a friendly, formatted error message.
+def _raise_validation_error(title: str, details: str, solution: str) -> NoReturn:
+    """Fail this document with a catchable error, preserving repair instructions.
 
-    Args:
-        title: Error title
-        details: Detailed error information
-        solution: Suggested solution steps
+    SystemExit can escape the async parser worker and cancel the API lifespan,
+    finalizing shared storage while the HTTP server is still accepting requests.
     """
-    print("\n" + "=" * 80, file=sys.stderr)
-    print(f"ERROR: {title}", file=sys.stderr)
-    print("=" * 80, file=sys.stderr)
-    print(f"\n{details}", file=sys.stderr)
-    print("\nSOLUTION:", file=sys.stderr)
-    print(solution, file=sys.stderr)
-    print("\n" + "=" * 80 + "\n", file=sys.stderr)
+    raise ValueError(f"{title}\n\n{details}\n\nSOLUTION:\n{solution}")
 
 
 def truncate_heading(heading_text: str, para_id: str | None = None) -> str:
@@ -110,14 +100,14 @@ def validate_heading_length(heading_text: str, para_id: str):
         heading_text: The heading text to validate
         para_id: The paragraph ID for error reporting
 
-    Exits:
-        sys.exit(1) if heading exceeds maximum length
+    Raises:
+        ValueError: If the heading exceeds the maximum length.
     """
     if len(heading_text) > MAX_HEADING_LENGTH:
         preview = (
             heading_text[:100] + "..." if len(heading_text) > 100 else heading_text
         )
-        print_error(
+        _raise_validation_error(
             f"Heading too long ({len(heading_text)} characters, max {MAX_HEADING_LENGTH})",
             f'The following heading exceeds the maximum allowed length:\n\n  "{preview}"\n\n'
             f"Location: Paragraph ID {para_id}\n"
@@ -126,7 +116,6 @@ def validate_heading_length(heading_text: str, para_id: str):
             f"  2. Shorten this heading to {MAX_HEADING_LENGTH} characters or less\n"
             "  3. Re-upload it to LightRAG",
         )
-        sys.exit(1)
 
 
 def validate_table_tokens(table_json: str, block_heading: str):
@@ -137,12 +126,12 @@ def validate_table_tokens(table_json: str, block_heading: str):
         table_json: The JSON representation of the table
         block_heading: The heading of the block containing this table
 
-    Exits:
-        sys.exit(1) if table exceeds maximum token limit
+    Raises:
+        ValueError: If the table exceeds the maximum token limit.
     """
     table_tokens = estimate_tokens(table_json)
     if table_tokens > MAX_BLOCK_CONTENT_TOKENS:
-        print_error(
+        _raise_validation_error(
             f"Table too large (~{table_tokens} tokens, max {MAX_BLOCK_CONTENT_TOKENS})",
             f"A table in the document is too large for LLM processing.\n\n"
             f'Location: Under heading "{block_heading}"\n'
@@ -154,7 +143,6 @@ def validate_table_tokens(table_json: str, block_heading: str):
             "  4. Simplify the table content\n"
             "  5. Re-upload it to LightRAG",
         )
-        sys.exit(1)
 
 
 def find_first_valid_para_id(para_ids: list) -> str | None:
@@ -884,8 +872,8 @@ def split_long_block(
     Returns:
         List of block dictionaries (may be split into multiple blocks), each with 'level' field
 
-    Exits:
-        sys.exit(1) if no suitable anchor found and content exceeds limit
+    Raises:
+        ValueError: If oversized content cannot be split safely.
     """
     import math
 
@@ -961,7 +949,7 @@ def split_long_block(
         preview = (
             block_heading[:80] + "..." if len(block_heading) > 80 else block_heading
         )
-        print_error(
+        _raise_validation_error(
             "Cannot split long block (no suitable anchor paragraphs found)",
             f"A text block is too long (~{total_tokens} tokens, max {MAX_BLOCK_CONTENT_TOKENS})\n"
             f"but no paragraphs <= {MAX_ANCHOR_CANDIDATE_LENGTH} characters were found to use as split points.\n\n"
@@ -974,7 +962,6 @@ def split_long_block(
             f"  3. Add short headings or paragraph breaks (≤{MAX_ANCHOR_CANDIDATE_LENGTH} chars) to divide the content\n"
             "  4. Re-upload it to LightRAG",
         )
-        sys.exit(1)
 
     # Select anchors for splitting (target_blocks - 1 split points needed)
     selected_anchors = []
@@ -1087,14 +1074,13 @@ def split_long_block(
                     if len(block["heading"]) > 80
                     else block["heading"]
                 )
-                print_error(
+                _raise_validation_error(
                     "Cannot re-split oversized block (internal error)",
                     f"A block exceeded MAX_BLOCK_CONTENT_TOKENS but paragraph metadata was lost.\n\n"
                     f"Location: Under heading \"{preview}\"\n"
                     f"Block size: ~{block_tokens} tokens ({len(block['content'])} characters)",
                     "This is an internal error. Please report this issue.",
                 )
-                sys.exit(1)
 
             # Recursively split this oversized block
             # The recursive call will either find more anchors or raise an error

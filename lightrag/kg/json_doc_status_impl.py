@@ -511,6 +511,7 @@ class JsonDocStatusStorage(DocStatusStorage):
         page_size: int = 50,
         sort_field: str = "updated_at",
         sort_direction: str = "desc",
+        status_filters: list[DocStatus] | None = None,
     ) -> tuple[list[tuple[str, DocProcessingStatus]], int]:
         """Get documents filtered by folder IDs with pagination support."""
         if page < 1:
@@ -525,6 +526,9 @@ class JsonDocStatusStorage(DocStatusStorage):
         if sort_direction.lower() not in ["asc", "desc"]:
             sort_direction = "desc"
 
+        selected_statuses = self.resolve_status_filter_values(
+            status_filter=status_filter, status_filters=status_filters
+        )
         folder_id_set = set(folder_ids)
         all_docs = []
 
@@ -537,8 +541,8 @@ class JsonDocStatusStorage(DocStatusStorage):
 
                 # Apply status filter
                 if (
-                    status_filter is not None
-                    and doc_data.get("status") != status_filter.value
+                    selected_statuses is not None
+                    and doc_data.get("status") not in selected_statuses
                 ):
                     continue
 

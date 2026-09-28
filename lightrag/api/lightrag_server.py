@@ -881,6 +881,8 @@ def create_app(args):
 
             # Data migration regardless of storage implementation
             await rag.check_and_migrate_data()
+            await rag.deletion_queue.start()
+            await project_datasets.start()
 
             ASCIIColors.green("\nServer is ready to accept connections! 🚀\n")
 
@@ -888,6 +890,8 @@ def create_app(args):
 
         finally:
             # Clean up database connections
+            await project_datasets.close()
+            await rag.deletion_queue.close()
             await rag.finalize_storages()
             await folder_kv.finalize()
 
@@ -2103,6 +2107,11 @@ def create_app(args):
     #IMPO: 文件夹管理
     app.include_router(create_folder_routes(rag, folder_manager, api_key))
 
+    from lightrag.api.projects import ProjectDatasets, install_project_routes
+
+    project_datasets = ProjectDatasets(rag, args.input_dir, api_key, args.top_k)
+    install_project_routes(app, project_datasets, api_key)
+
     _log_role_provider_options(rag)
 
     rag.register_role_llm_builder(
@@ -2294,7 +2303,12 @@ def create_app(args):
     async def get_status(request: Request):
         """Get current system status including WebUI availability"""
         try:
-            workspace = get_workspace_from_request(request)
+            status_rag = rag
+            project_id = request.headers.get("X-LightRAG-Project", "")
+            if project_id:
+                await project_datasets.get(project_id)
+                status_rag = project_datasets.instances[project_id][1]
+            workspace = project_id or get_workspace_from_request(request)
             default_workspace = get_default_workspace()
             if workspace is None:
                 workspace = default_workspace
@@ -2348,8 +2362,8 @@ def create_app(args):
                     "enable_llm_cache_for_extract": args.enable_llm_cache_for_extract,
                     "enable_llm_cache": args.enable_llm_cache,
                     "vlm_process_enable": args.vlm_process_enable,
-                    "workspace": default_workspace,
-                    "storage_workspaces": _get_storage_workspaces(rag),
+                    "workspace": workspace,
+                    "storage_workspaces": _get_storage_workspaces(status_rag),
                     "max_graph_nodes": args.max_graph_nodes,
                     # Rerank configuration
                     "enable_rerank": rerank_model_func is not None,
@@ -2372,7 +2386,7 @@ def create_app(args):
                     "embedding_func_max_async": args.embedding_func_max_async,
                     "embedding_batch_num": args.embedding_batch_num,
                     "embedding_timeout": args.embedding_timeout,
-                    "role_llm_config": rag.get_llm_role_config(),
+                    "role_llm_config": status_rag.get_llm_role_config(),
                     # Parser routing snapshot — surfaced in the WebUI status card
                     "parser_routing": parser_rules_from_env(),
                     "mineru": _build_mineru_status(),
@@ -2385,14 +2399,16 @@ def create_app(args):
                 "pipeline_destructive_busy": pipeline_destructive_busy,
                 "pipeline_pending_enqueues": pipeline_pending_enqueues,
                 "keyed_locks": keyed_lock_info,
-                "llm_queue_status": await rag.get_llm_queue_status(include_base=True),
-                "embedding_queue_status": await rag.get_embedding_queue_status(),
-                "rerank_queue_status": await rag.get_rerank_queue_status(),
+                "llm_queue_status": await status_rag.get_llm_queue_status(include_base=True),
+                "embedding_queue_status": await status_rag.get_embedding_queue_status(),
+                "rerank_queue_status": await status_rag.get_rerank_queue_status(),
                 "core_version": core_version,
                 "api_version": api_version_display,
                 "webui_title": webui_title,
                 "webui_description": webui_description,
             }
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error getting health status: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))

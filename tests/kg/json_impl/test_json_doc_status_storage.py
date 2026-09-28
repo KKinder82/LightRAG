@@ -1,6 +1,6 @@
 import pytest
 
-from lightrag.base import DocStatus
+from lightrag.base import DocStatus, DocStatusStorage
 from lightrag.kg.json_doc_status_impl import JsonDocStatusStorage
 from lightrag.kg.json_kv_impl import JsonKVStorage
 from lightrag.kg.shared_storage import finalize_share_data, initialize_share_data
@@ -77,6 +77,40 @@ async def test_get_docs_paginated_with_status_filters(tmp_path):
         DocStatus.PARSING,
         DocStatus.ANALYZING,
     ]
+
+
+@pytest.mark.parametrize("use_base_implementation", [False, True])
+@pytest.mark.parametrize("status_filters, expected", [
+    ([DocStatus.PARSING, DocStatus.ANALYZING], ["doc-2", "doc-3"]),
+    ([], ["doc-1"]),
+])
+async def test_folder_status_filters_override_single_status(
+    tmp_path, use_base_implementation, status_filters, expected
+):
+    storage = JsonDocStatusStorage(
+        namespace="doc_status", global_config={"working_dir": str(tmp_path)},
+        embedding_func=_DummyEmbeddingFunc(), workspace="test",
+    )
+    await storage.initialize()
+    documents = {
+        "doc-1": _doc("processed", "one.txt"),
+        "doc-2": _doc("parsing", "two.txt"),
+        "doc-3": _doc("analyzing", "three.txt"),
+        "doc-4": _doc("analyzing", "outside.txt"),
+    }
+    for doc_id, doc in documents.items():
+        doc["metadata"] = {"folder_ids": ["outside" if doc_id == "doc-4" else "folder-a"]}
+    await storage.upsert(documents)
+    method = (
+        DocStatusStorage.get_docs_by_folder_ids.__get__(storage)
+        if use_base_implementation else storage.get_docs_by_folder_ids
+    )
+    docs, total = await method(
+        ["folder-a"], status_filter=DocStatus.PROCESSED,
+        status_filters=status_filters, sort_field="id", sort_direction="asc",
+    )
+    assert total == len(expected)
+    assert [doc_id for doc_id, _ in docs] == expected
 
 
 @pytest.mark.asyncio

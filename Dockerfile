@@ -68,6 +68,14 @@ RUN mkdir -p /app/data/tiktoken \
 # Final stage
 FROM python:3.12-slim
 
+# Local extraction for legacy Office files and Chinese/English image OCR.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       libreoffice-writer libreoffice-impress libreoffice-calc \
+       tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \
+       fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install uv for package management

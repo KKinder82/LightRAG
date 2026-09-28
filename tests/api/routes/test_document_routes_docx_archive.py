@@ -928,7 +928,7 @@ async def test_scan_resume_runs_when_all_new_files_fail_to_enqueue(
     assert new_file.exists()
 
 
-async def test_upload_rejects_same_name_failed_doc_status_without_full_docs(
+async def test_upload_versions_same_name_failed_doc_status_without_full_docs(
     tmp_path, monkeypatch
 ):
     # Other tests (e.g. test_auth.py) may replace global_args with a SimpleNamespace
@@ -958,18 +958,17 @@ async def test_upload_rejects_same_name_failed_doc_status_without_full_docs(
         file=BytesIO(b"replacement docx bytes"),
     )
 
-    # Strict name pre-check: same-canonical record in doc_status now raises 409
-    # rather than returning a "duplicated" 200 response.  Clients must delete
-    # the existing record before re-uploading.
-    with pytest.raises(_document_routes.HTTPException) as excinfo:
-        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file, None)
-    assert excinfo.value.status_code == 409
-    assert "failed.docx" in excinfo.value.detail
-    assert "Status: failed" in excinfo.value.detail
+    bg = _document_routes.BackgroundTasks()
+    response = await upload_endpoint(bg, upload_file, None)
+    assert response.status == "success"
+    assert len(bg.tasks) == 1
+    revisions = list(tmp_path.glob("failed-*.docx"))
+    assert len(revisions) == 1
+    assert revisions[0].read_bytes() == b"replacement docx bytes"
     assert not (tmp_path / "failed.docx").exists()
 
 
-async def test_upload_rejects_parser_hinted_filesystem_duplicate(tmp_path, monkeypatch):
+async def test_upload_versions_parser_hinted_filesystem_duplicate(tmp_path, monkeypatch):
     monkeypatch.setattr(
         _document_routes, "global_args", SimpleNamespace(max_upload_size=None)
     )
@@ -987,13 +986,14 @@ async def test_upload_rejects_parser_hinted_filesystem_duplicate(tmp_path, monke
         file=BytesIO(b"replacement docx bytes"),
     )
 
-    # Strict name pre-check: an INPUT directory file with the same canonical
-    # basename now blocks the upload with 409.
-    with pytest.raises(_document_routes.HTTPException) as excinfo:
-        await upload_endpoint(_document_routes.BackgroundTasks(), upload_file, None)
-    assert excinfo.value.status_code == 409
-    assert "existing.docx" in excinfo.value.detail
-    assert not (tmp_path / "existing.[native].docx").exists()
+    bg = _document_routes.BackgroundTasks()
+    response = await upload_endpoint(bg, upload_file, None)
+    assert response.status == "success"
+    assert len(bg.tasks) == 1
+    assert (tmp_path / "existing.docx").read_bytes() == b"existing docx bytes"
+    revisions = list(tmp_path.glob("existing-*.docx"))
+    assert len(revisions) == 1
+    assert ".[native].docx" in revisions[0].name
 
 
 async def test_upload_succeeds_concurrent_with_pipeline_busy(tmp_path, monkeypatch):
@@ -1680,6 +1680,9 @@ async def test_delete_document_reserves_destructive_busy_synchronously(tmp_path)
     pipeline_status["busy"] = False
     pipeline_status["destructive_busy"] = False
 
+    from unittest.mock import AsyncMock
+    rag.deletion_queue.submit = AsyncMock(return_value="delete-test")
+
     # Case 2: scanning=True must refuse without scheduling.
     pipeline_status["scanning"] = True
     bg = _document_routes.BackgroundTasks()
@@ -1687,7 +1690,7 @@ async def test_delete_document_reserves_destructive_busy_synchronously(tmp_path)
         DeleteDocRequest(doc_ids=["doc-1"]),
         bg,
     )
-    assert response.status == "busy"
+    assert response.status == "deletion_queued"
     assert len(bg.tasks) == 0
     assert pipeline_status.get("destructive_busy", False) is False
     pipeline_status["scanning"] = False
@@ -1699,7 +1702,7 @@ async def test_delete_document_reserves_destructive_busy_synchronously(tmp_path)
         DeleteDocRequest(doc_ids=["doc-1"]),
         bg,
     )
-    assert response.status == "busy"
+    assert response.status == "deletion_queued"
     assert len(bg.tasks) == 0
     assert pipeline_status["pending_enqueues"] == 1
     assert pipeline_status.get("destructive_busy", False) is False

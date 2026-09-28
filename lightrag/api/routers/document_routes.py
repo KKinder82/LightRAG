@@ -3,6 +3,7 @@ This module contains all document-related routes for the LightRAG API.
 """
 
 import asyncio
+import os
 import re
 import shutil
 import time
@@ -12,7 +13,7 @@ import aiofiles
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Literal
+from typing import Dict, List, Optional, Any, Literal, Annotated
 from io import BytesIO
 from fastapi import (
     APIRouter,
@@ -25,6 +26,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from lightrag.parser.office_ocr import extract_legacy_or_image
 from lightrag import LightRAG
 from lightrag.base import DeletionResult, DocProcessingStatus, DocStatus
 from lightrag.constants import (
@@ -52,7 +54,6 @@ from lightrag.utils import (
 )
 from lightrag.utils_pipeline import (
     normalize_document_file_path,
-    compute_text_content_hash,
 )
 from lightrag.api.utils_api import get_combined_auth_dependency
 from ..config import global_args
@@ -1083,6 +1084,8 @@ class DocumentManager:
             ".mdx",  # MDX (Markdown + JSX)
             ".pdf",
             ".docx",
+            ".doc", ".ppt", ".xls",
+            ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp",
             ".pptx",
             ".xlsx",
             ".rtf",  # Rich Text Format
@@ -1231,17 +1234,13 @@ def get_doc_track_id(doc_status: Any) -> str:
 
 async def get_existing_doc_by_file_path_candidates(
     doc_status: Any, file_path: Path | str
-) -> dict[str, Any] | None:
+) -> tuple[str, dict[str, Any]] | None:
     # 通过标准文件名，即上传目录下的相对路径，查找已存在的文档（如果有）。如果file_path无效或未提供，返回None。
-    """Find an existing document by canonical basename."""
+    """Find an existing document and its stored ID by canonical basename."""
     basename = normalize_file_path(str(file_path))
     if basename == UNKNOWN_FILE_SOURCE:
         return None
-    match = await doc_status.get_doc_by_file_basename(basename)
-    if not match:
-        return None
-    _, existing_doc_data = match
-    return existing_doc_data
+    return await doc_status.get_doc_by_file_basename(basename)
 
 
 #GROUP: 保留一个待处理的上传/插入槽位（pending enqueue slot）
@@ -1924,6 +1923,8 @@ async def pipeline_enqueue_file(
     folder_id: Optional[str] = None,
 
     from_scan: bool = False,
+    allow_duplicate_content: bool = False,
+    fast_index: bool = False,
 
 ) -> tuple[bool, str]:
     # MARK: 增加一个文件到处理队列
@@ -1944,6 +1945,14 @@ async def pipeline_enqueue_file(
     # Generate track_id if not provided
     if track_id is None:
         track_id = generate_track_id("unknown")
+
+    async def _record_upload_errors(
+        error_files: list[dict[str, Any]], error_track_id: str | None
+    ) -> None:
+        """Keep extraction failures visible in the requested upload folder."""
+        if folder_id:
+            error_files = [{**error, "folder_id": folder_id} for error in error_files]
+        await rag.apipeline_enqueue_error_documents(error_files, error_track_id)
 
     try:
         #MARK: 初始化一些变量
@@ -2008,7 +2017,7 @@ async def pipeline_enqueue_file(
                     "file_size": file_size,
                 }
             ]
-            await rag.apipeline_enqueue_error_documents(error_files, track_id)
+            await _record_upload_errors(error_files, track_id)
             logger.error(
                 f"[File Extraction]Invalid filename hint in {file_path.name}: {e}"
             )
@@ -2016,6 +2025,8 @@ async def pipeline_enqueue_file(
             return False, track_id
 
         api_process_options = process_options or PROCESS_OPTION_CHUNK_FIXED # 确认一个默认的处理选项
+        if fast_index and "!" not in api_process_options:
+            api_process_options += "!"
         if extraction_engine != PARSER_ENGINE_LEGACY:
             # MARK: 不是传统解析器，直接进入排队流程，不进行预处理
             try:
@@ -2027,6 +2038,8 @@ async def pipeline_enqueue_file(
                     "process_options": api_process_options,
                     "from_scan": from_scan,
                 }
+                if allow_duplicate_content:
+                    enqueue_kwargs["allow_duplicate_content"] = True
                 if folder_id:
                     enqueue_kwargs["folder_id"] = folder_id
                 # TODO: 一会儿处理。
@@ -2057,7 +2070,7 @@ async def pipeline_enqueue_file(
                         "file_size": file_size,
                     }
                 ]
-                await rag.apipeline_enqueue_error_documents(error_files, track_id)
+                await _record_upload_errors(error_files, track_id)
                 logger.error(
                     f"[File Extraction]Error enqueuing {file_path.name} for {extraction_engine}: {str(e)}"
                 )
@@ -2080,7 +2093,7 @@ async def pipeline_enqueue_file(
                     "file_size": file_size,
                 }
             ]
-            await rag.apipeline_enqueue_error_documents(error_files, track_id)
+            await _record_upload_errors(error_files, track_id)
             logger.error(
                 f"[File Extraction]Permission denied reading file: {file_path.name}"
             )
@@ -2095,7 +2108,7 @@ async def pipeline_enqueue_file(
                     "file_size": file_size,
                 }
             ]
-            await rag.apipeline_enqueue_error_documents(error_files, track_id)
+            await _record_upload_errors(error_files, track_id)
             logger.error(f"[File Extraction]File not found: {file_path.name}")
             return False, track_id
         except Exception as e:
@@ -2108,7 +2121,7 @@ async def pipeline_enqueue_file(
                     "file_size": file_size,
                 }
             ]
-            await rag.apipeline_enqueue_error_documents(error_files, track_id)
+            await _record_upload_errors(error_files, track_id)
             logger.error(
                 f"[File Extraction]Error reading file {file_path.name}: {str(e)}"
             )
@@ -2170,7 +2183,7 @@ async def pipeline_enqueue_file(
                                     "file_size": file_size,
                                 }
                             ]
-                            await rag.apipeline_enqueue_error_documents(
+                            await _record_upload_errors(
                                 error_files, track_id
                             )
                             logger.error(
@@ -2189,7 +2202,7 @@ async def pipeline_enqueue_file(
                                     "file_size": file_size,
                                 }
                             ]
-                            await rag.apipeline_enqueue_error_documents(
+                            await _record_upload_errors(
                                 error_files, track_id
                             )
                             logger.error(
@@ -2208,7 +2221,7 @@ async def pipeline_enqueue_file(
                                 "file_size": file_size,
                             }
                         ]
-                        await rag.apipeline_enqueue_error_documents(
+                        await _record_upload_errors(
                             error_files, track_id
                         )
                         logger.error(
@@ -2216,6 +2229,15 @@ async def pipeline_enqueue_file(
                         )
                         #RET:
                         return False, track_id
+
+                case ".doc" | ".ppt" | ".xls" | ".png" | ".jpg" | ".jpeg" | ".bmp" | ".tif" | ".tiff" | ".webp":
+                    if not hasattr(rag, "_office_ocr_slots"):
+                        rag._office_ocr_slots = asyncio.Semaphore(max(1, rag.max_parallel_parse_native))
+                    async with rag._office_ocr_slots:
+                        content = await asyncio.to_thread(
+                            extract_legacy_or_image, file, ext,
+                            {"docx": _extract_docx, "pptx": _extract_pptx, "xlsx": _extract_xlsx},
+                        )
 
                 case ".pdf":
                     #MARK: PDF文件，使用pypdf提取文本（支持加密PDF）
@@ -2234,7 +2256,7 @@ async def pipeline_enqueue_file(
                                 "file_size": file_size,
                             }
                         ]
-                        await rag.apipeline_enqueue_error_documents(
+                        await _record_upload_errors(
                             error_files, track_id
                         )
                         logger.error(
@@ -2256,7 +2278,7 @@ async def pipeline_enqueue_file(
                                 "file_size": file_size,
                             }
                         ]
-                        await rag.apipeline_enqueue_error_documents(
+                        await _record_upload_errors(
                             error_files, track_id
                         )
                         logger.error(
@@ -2278,7 +2300,7 @@ async def pipeline_enqueue_file(
                                 "file_size": file_size,
                             }
                         ]
-                        await rag.apipeline_enqueue_error_documents(
+                        await _record_upload_errors(
                             error_files, track_id
                         )
                         logger.error(
@@ -2300,7 +2322,7 @@ async def pipeline_enqueue_file(
                                 "file_size": file_size,
                             }
                         ]
-                        await rag.apipeline_enqueue_error_documents(
+                        await _record_upload_errors(
                             error_files, track_id
                         )
                         logger.error(
@@ -2318,7 +2340,7 @@ async def pipeline_enqueue_file(
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
+                    await _record_upload_errors(error_files, track_id)
                     logger.error(
                         f"[File Extraction]Unsupported file type: {file_path.name} (extension {ext})"
                     )
@@ -2334,7 +2356,7 @@ async def pipeline_enqueue_file(
                     "file_size": file_size,
                 }
             ]
-            await rag.apipeline_enqueue_error_documents(error_files, track_id)
+            await _record_upload_errors(error_files, track_id)
             logger.error(
                 f"[File Extraction]Unexpected error during {file_path.name} extracting: {str(e)}"
             )
@@ -2353,7 +2375,7 @@ async def pipeline_enqueue_file(
                         "file_size": file_size,
                     }
                 ]
-                await rag.apipeline_enqueue_error_documents(error_files, track_id)
+                await _record_upload_errors(error_files, track_id)
                 logger.warning(
                     f"[File Extraction]File contains only whitespace characters: {file_path.name}"
                 )
@@ -2368,6 +2390,8 @@ async def pipeline_enqueue_file(
                     "process_options": api_process_options,
                     "from_scan": from_scan,
                 }
+                if allow_duplicate_content:
+                    enqueue_kwargs["allow_duplicate_content"] = True
                 if folder_id:
                     enqueue_kwargs["folder_id"] = folder_id
                 #MARK: 内容处理完成，进入排队流程。
@@ -2412,7 +2436,7 @@ async def pipeline_enqueue_file(
                         "file_size": file_size,
                     }
                 ]
-                await rag.apipeline_enqueue_error_documents(error_files, track_id)
+                await _record_upload_errors(error_files, track_id)
                 logger.error(f"Error enqueueing document {file_path.name}: {str(e)}")
                 #RET:
                 return False, track_id
@@ -2426,7 +2450,7 @@ async def pipeline_enqueue_file(
                     "file_size": file_size,
                 }
             ]
-            await rag.apipeline_enqueue_error_documents(error_files, track_id)
+            await _record_upload_errors(error_files, track_id)
             logger.error(f"No content extracted from file: {file_path.name}")
             #RET:
             return False, track_id
@@ -2446,7 +2470,7 @@ async def pipeline_enqueue_file(
                 "file_size": file_size,
             }
         ]
-        await rag.apipeline_enqueue_error_documents(error_files, track_id)
+        await _record_upload_errors(error_files, track_id)
         logger.error(f"Enqueuing file {file_path.name} error: {str(e)}")
         logger.error(traceback.format_exc())
         #RET:
@@ -3320,9 +3344,11 @@ def create_document_routes(
         background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
         folder_id: Optional[str] = Form(None),
+        fast_index: Annotated[bool, Form()] = False,
     ):
         
         slot_reserved = False
+        allocated_path: Path | None = None
         try:
             # Reject upload while a scan is in its CLASSIFICATION
             # phase or a destructive job (clear / per-doc delete) is
@@ -3369,107 +3395,39 @@ def create_document_routes(
 
             file_path = doc_manager.input_dir / safe_filename
 
-            # Strict name pre-check.  Both the INPUT directory and doc_status
-            # must be free of any same-canonical-basename record before we
-            # accept the upload.
-            # With multi-folder support: same file in different folders is
-            # allowed; only same-file + same-folder is rejected.
-            # 如果文件存储，則返回文件，不存在，返回 None
-            existing_doc_data = await get_existing_doc_by_file_path_candidates(
-                rag.doc_status, file_path
-            )
-            if existing_doc_data:
-                existing_meta = existing_doc_data.get("metadata") or {}
-                if folder_id and _folder_ids_includes(existing_meta, folder_id):
-                    # Same file, same folder: reject
-                    status = get_doc_status_value(existing_doc_data) or "unknown"
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            f"Document '{safe_filename}' already exists "
-                            f"in this folder (Status: {status}). "
-                            f"Same file cannot be uploaded twice to the same folder."
-                        ),
-                    )
-                if folder_id:
-                    # Same file, different folder: just update metadata
-                    existing_folder_ids = _get_folder_ids_from_metadata(existing_meta)
-                    existing_folder_ids.append(folder_id)
-                    existing_meta["folder_ids"] = existing_folder_ids
-                    existing_meta["folder_id"] = existing_folder_ids[0]
-                    existing_doc_data["metadata"] = existing_meta
-                    doc_id = compute_mdhash_id(
-                        normalize_file_path(safe_filename), prefix="doc-"
-                    )
-                    await rag.doc_status.upsert({doc_id: existing_doc_data})
-                    logger.info(
-                        f"[Multi-folder] Added folder '{folder_id}' to "
-                        f"existing document '{safe_filename}' "
-                        f"(total folders: {len(existing_folder_ids)})"
-                    )
-                    return InsertResponse(
-                        status="success",
-                        message=(
-                            f"File '{safe_filename}' is already processed. "
-                            f"Added to the new folder."
-                        ),
-                        track_id=existing_doc_data.get("track_id", ""),
-                    )
-                if not folder_id:
-                    # No folder specified but file already exists.
-                    # If the doc is PROCESSED (or similar success states),
-                    # return success — the file is already analyzed.
-                    # If the doc is FAILED, reject so the user can delete
-                    # and retry (the original strict-name-pre-check behavior).
-                    status = get_doc_status_value(existing_doc_data) or "unknown"
-                    if status == DocStatus.FAILED.value:
-                        raise HTTPException(
-                            status_code=409,
-                            detail=(
-                                f"Document storage already contains '{safe_filename}' "
-                                f"(Status: {status}). Delete the existing record before re-uploading."
-                            ),
-                        )
-                    logger.info(
-                        f"[Multi-folder] File '{safe_filename}' already exists "
-                        f"(Status: {status}), no folder specified — returning success"
-                    )
-                    return InsertResponse(
-                        status="success",
-                        message=(
-                            f"File '{safe_filename}' is already processed "
-                            f"(Status: {status}). No new folder specified."
-                        ),
-                        track_id=existing_doc_data.get("track_id", ""),
-                    )
+            # Preserve every upload as a separate revision on name conflicts.
+            # Exclusive file creation below also closes simultaneous-upload races.
+            from uuid import uuid4
 
-            # INPUT directory check, using canonical parser-hint names.
-            # Fast path: exact filename match avoids iterdir on large input directories.
-            canonical_filename = normalize_file_path(safe_filename)
-            if file_path.exists():
-                existing_input_file: Path | None = file_path
-            else:
-                # 根据 位置候选列表检查是否存在同名文件（不同的路径但同样的规范化名称），以避免迭代整个输入目录。
-                existing_input_file = find_existing_file_by_file_path(
-                    doc_manager.input_dir, canonical_filename
-                )
-            if existing_input_file:
-                # 文件存在于输入目录中，但之前的检查未发现（可能是因为规范化名称匹配但路径不同），拒绝上传以避免覆盖。
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Input directory already contains a file with the same "
-                        f"canonical basename ('{existing_input_file.name}'). "
-                        f"Remove or rename it before re-uploading."
-                    ),
-                )
+            original_filename = safe_filename
+
+            def next_revision():
+                parts = original_filename.split('.[', 1)
+                if len(parts) == 2:
+                    return f"{parts[0]}-{uuid4().hex[:12]}.[{parts[1]}"
+                name = Path(original_filename)
+                return f"{name.stem}-{uuid4().hex[:12]}{name.suffix}"
+
+            existing_doc = await get_existing_doc_by_file_path_candidates(rag.doc_status, file_path)
+            if existing_doc or find_existing_file_by_file_path(doc_manager.input_dir, normalize_file_path(safe_filename)):
+                safe_filename = next_revision()
+                file_path = doc_manager.input_dir / safe_filename
+            while True:
+                try:
+                    # Reserve before yielding so competing uploads cannot overwrite.
+                    descriptor = os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    allocated_path = file_path
+                    break
+                except FileExistsError:
+                    safe_filename = next_revision()
+                    file_path = doc_manager.input_dir / safe_filename
 
             # Async streaming write with size check
             bytes_written = 0
             chunk_size = 1024 * 1024  # 1MB chunks
             needs_cleanup = False
 
-            async with aiofiles.open(file_path, "wb") as out_file:
+            async with aiofiles.open(descriptor, "wb") as out_file:
                 # 保存文件的同时检查大小限制，以防止过大的文件被完全写入磁盘。
                 # 即使某些环境的 UploadFile 不提供 size 属性，我们也能在写入过程中 enforce 大小限制。
                 while True:
@@ -3521,7 +3479,12 @@ def create_document_routes(
             async def _indexing_task():
                 try:
                     # TODO: 任务处理
-                    await pipeline_index_file(rag, file_path, track_id, folder_id=folder_id)
+                    success, _ = await pipeline_enqueue_file(
+                        rag, file_path, track_id, folder_id=folder_id,
+                        allow_duplicate_content=True, fast_index=fast_index,
+                    )
+                    if success:
+                        await rag.apipeline_process_enqueue_documents()
                 finally:
                     # 最后释放预留的插槽，无论任务成功与否都要确保释放，以避免死锁。
                     await _release_enqueue_slot(rag)
@@ -3553,7 +3516,11 @@ def create_document_routes(
             # any sibling bg task triggers its own processing pass.
             #MARK: 结束
             if slot_reserved:
-                await _release_enqueue_slot(rag)
+                try:
+                    if allocated_path is not None:
+                        allocated_path.unlink(missing_ok=True)
+                finally:
+                    await _release_enqueue_slot(rag)
 
     @router.post(
         "/text", response_model=InsertResponse, dependencies=[Depends(combined_auth)]
@@ -3601,11 +3568,13 @@ def create_document_routes(
                 )
 
             normalized_file_source = normalize_file_path(request.file_source)
-            existing_doc_data = await get_existing_doc_by_file_path_candidates(
+            existing_doc = await get_existing_doc_by_file_path_candidates(
                 rag.doc_status, normalized_file_source
             )
-            if existing_doc_data:
-                existing_meta = existing_doc_data.get("metadata") or {}
+            if existing_doc:
+                doc_id, stored_doc_data = existing_doc
+                existing_doc_data = dict(stored_doc_data)
+                existing_meta = dict(existing_doc_data.get("metadata") or {})
                 if request.folder_id and _folder_ids_includes(existing_meta, request.folder_id):
                     # Same text source, same folder: reject
                     status = get_doc_status_value(existing_doc_data) or "unknown"
@@ -3624,15 +3593,12 @@ def create_document_routes(
                     existing_meta["folder_ids"] = existing_folder_ids
                     existing_meta["folder_id"] = existing_folder_ids[0]
                     existing_doc_data["metadata"] = existing_meta
-                    doc_id = compute_mdhash_id(normalized_file_source, prefix="doc-")
                     await rag.doc_status.upsert({doc_id: existing_doc_data})
                     logger.info(
                         f"[Multi-folder] Added folder '{request.folder_id}' to "
                         f"existing document '{normalized_file_source}' "
                         f"(total folders: {len(existing_folder_ids)})"
                     )
-                    slot_reserved = await _reserve_enqueue_slot(rag)
-                    slot_reserved = False  # no bg task needed
                     return InsertResponse(
                         status="success",
                         message=(
@@ -3781,12 +3747,19 @@ def create_document_routes(
                 )
 
             failed_sources: list[str] = []
-            for file_source in normalized_file_sources:
-                existing_doc_data = await get_existing_doc_by_file_path_candidates(
+            new_texts: list[str] = []
+            new_file_sources: list[str] = []
+            folder_updates: dict[str, dict[str, Any]] = {}
+            existing_track_id = ""
+            for text, file_source in zip(request.texts, normalized_file_sources):
+                existing_doc = await get_existing_doc_by_file_path_candidates(
                     rag.doc_status, file_source
                 )
-                if existing_doc_data:
-                    existing_meta = existing_doc_data.get("metadata") or {}
+                if existing_doc:
+                    doc_id, stored_doc_data = existing_doc
+                    existing_doc_data = dict(stored_doc_data)
+                    existing_meta = dict(existing_doc_data.get("metadata") or {})
+                    existing_track_id = existing_track_id or get_doc_track_id(existing_doc_data)
                     if request.folder_id and _folder_ids_includes(existing_meta, request.folder_id):
                         # Same source, same folder: reject this one
                         status = get_doc_status_value(existing_doc_data) or "unknown"
@@ -3795,16 +3768,21 @@ def create_document_routes(
                         )
                         continue
                     if request.folder_id:
-                        # Same source, different folder: add silently
+                        # Stage metadata changes until the whole request validates.
                         existing_folder_ids = _get_folder_ids_from_metadata(existing_meta)
                         existing_folder_ids.append(request.folder_id)
                         existing_meta["folder_ids"] = existing_folder_ids
                         existing_meta["folder_id"] = existing_folder_ids[0]
                         existing_doc_data["metadata"] = existing_meta
-                        doc_id = compute_mdhash_id(file_source, prefix="doc-")
-                        await rag.doc_status.upsert({doc_id: existing_doc_data})
+                        folder_updates[doc_id] = existing_doc_data
                         continue
                     if not request.folder_id:
+                        if get_doc_status_value(existing_doc_data) == DocStatus.FAILED.value:
+                            failed_sources.append(
+                                f"'{file_source}' already exists (Status: failed). "
+                                "Delete the existing record before re-inserting."
+                            )
+                            continue
                         # No folder specified but text already exists:
                         # Skip silently — the text is already processed.
                         logger.info(
@@ -3812,7 +3790,11 @@ def create_document_routes(
                             f"no folder specified — skipping"
                         )
                         continue
-            # Note: failed_sources only contains same-file-same-folder conflicts
+                new_texts.append(text)
+                new_file_sources.append(file_source)
+
+            if failed_sources:
+                raise HTTPException(status_code=409, detail="; ".join(failed_sources))
 
             # Resolve + validate the shared chunking synchronously so an
             # invalid effective config (e.g. chunk_token_size below the
@@ -3824,6 +3806,15 @@ def create_document_routes(
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
 
+            if folder_updates:
+                await rag.doc_status.upsert(folder_updates)
+            if not new_texts:
+                return InsertResponse(
+                    status="success",
+                    message="Documents already exist. Folder associations updated where requested.",
+                    track_id=existing_track_id,
+                )
+
             # Generate track_id for texts insertion
             track_id = generate_track_id("insert")
 
@@ -3832,8 +3823,8 @@ def create_document_routes(
                 try:
                     await pipeline_index_texts_with_folder_id(
                         rag,
-                        request.texts,
-                        file_sources=normalized_file_sources,
+                        new_texts,
+                        file_sources=new_file_sources,
                         track_id=track_id,
                         folder_id=request.folder_id,
                         chunking=request.chunking,
@@ -4278,19 +4269,13 @@ def create_document_routes(
     class DeleteDocByIdResponse(BaseModel):
         """Response model for single document deletion operation."""
 
-        status: Literal["deletion_started", "busy", "not_allowed", "success", "not_found"] = Field(
+        status: Literal["deletion_started", "deletion_queued", "busy", "not_allowed", "success", "not_found"] = Field(
             description="Status of the deletion operation"
         )
         message: str = Field(description="Message describing the operation result")
         doc_id: str = Field(description="The ID of the document to delete")
 
-    @router.delete(
-        "/delete_document",
-        response_model=DeleteDocByIdResponse,
-        dependencies=[Depends(combined_auth)],
-        summary="Delete a document and all its associated data by its ID.",
-    )
-    async def delete_document(
+    async def _delete_document(
         delete_request: DeleteDocRequest,
         background_tasks: BackgroundTasks,
     ) -> DeleteDocByIdResponse:
@@ -4300,7 +4285,8 @@ def create_document_routes(
         With multi-folder support:
         - If ``folder_id`` is provided: only removes the document from that folder.
           If other folders still reference the document, the document itself is kept.
-          This is a synchronous operation (no background task).
+          Removing references is synchronous; documents losing their last
+          folder reference are deleted in the background.
         - If ``folder_id`` is not provided: fully deletes the document and all its data
           regardless of folder references (old behavior, background task).
 
@@ -4312,52 +4298,6 @@ def create_document_routes(
             DeleteDocByIdResponse: The result of the deletion operation.
         """
         doc_ids = delete_request.doc_ids
-
-        # ------------------------------------------------------------------
-        # Folder-level removal: just remove the folder relationship,
-        # keep the document if other folders still reference it.
-        # ------------------------------------------------------------------
-        if delete_request.folder_id and len(doc_ids) == 1:
-            doc_id = doc_ids[0]
-            doc_data = await rag.doc_status.get_by_id(doc_id)
-            if doc_data:
-                meta = doc_data.get("metadata") or {}
-                folder_ids = _get_folder_ids_from_metadata(meta)
-                if delete_request.folder_id in folder_ids:
-                    folder_ids.remove(delete_request.folder_id)
-                    if folder_ids:
-                        # Still referenced by other folders: keep document
-                        meta["folder_ids"] = folder_ids
-                        meta["folder_id"] = folder_ids[0]
-                        doc_data["metadata"] = meta
-                        await rag.doc_status.upsert({doc_id: doc_data})
-                        return DeleteDocByIdResponse(
-                            status="success",
-                            message=(
-                                f"Removed document '{doc_id}' from folder "
-                                f"'{delete_request.folder_id}'. "
-                                f"Still exists in {len(folder_ids)} other folder(s)."
-                            ),
-                            doc_id=doc_id,
-                        )
-                    else:
-                        # No more folder references: proceed to full delete below
-                        pass
-                else:
-                    return DeleteDocByIdResponse(
-                        status="not_found",
-                        message=(
-                            f"Document '{doc_id}' is not in folder "
-                            f"'{delete_request.folder_id}'."
-                        ),
-                        doc_id=doc_id,
-                    )
-            else:
-                return DeleteDocByIdResponse(
-                    status="not_found",
-                    message=f"Document '{doc_id}' not found.",
-                    doc_id=doc_id,
-                )
 
         slot_acquired = False
         try:
@@ -4376,6 +4316,45 @@ def create_document_routes(
                     doc_id=", ".join(doc_ids),
                 )
             slot_acquired = True
+
+            if delete_request.folder_id:
+                # Classify every requested document while holding the same
+                # reservation that excludes processing, enqueues and scans.
+                folder_updates: dict[str, dict[str, Any]] = {}
+                full_delete_ids: list[str] = []
+                for doc_id in doc_ids:
+                    stored_doc_data = await rag.doc_status.get_by_id(doc_id)
+                    if not stored_doc_data:
+                        continue
+                    doc_data = dict(stored_doc_data)
+                    meta = dict(doc_data.get("metadata") or {})
+                    folder_ids = _get_folder_ids_from_metadata(meta)
+                    if delete_request.folder_id not in folder_ids:
+                        continue
+                    remaining_ids = [
+                        fid for fid in folder_ids if fid != delete_request.folder_id
+                    ]
+                    if remaining_ids:
+                        meta["folder_ids"] = remaining_ids
+                        meta["folder_id"] = remaining_ids[0]
+                        doc_data["metadata"] = meta
+                        folder_updates[doc_id] = doc_data
+                    else:
+                        full_delete_ids.append(doc_id)
+
+                if folder_updates:
+                    await rag.doc_status.upsert(folder_updates)
+                if not full_delete_ids:
+                    return DeleteDocByIdResponse(
+                        status="success" if folder_updates else "not_found",
+                        message=(
+                            f"Removed {len(folder_updates)} document(s) from folder "
+                            f"'{delete_request.folder_id}'. Documents referenced "
+                            "by other folders were kept."
+                        ),
+                        doc_id=", ".join(doc_ids),
+                    )
+                doc_ids = full_delete_ids
 
             background_tasks.add_task(
                 background_delete_documents,
@@ -4407,6 +4386,34 @@ def create_document_routes(
             # so the next reservation / scan / enqueue can proceed.
             if slot_acquired:
                 await _release_destructive_busy(rag)
+
+    from lightrag.api.deletion_queue import DeletionQueue
+
+    deletion_queue = DeletionQueue(rag, _delete_document)
+    rag.deletion_queue = deletion_queue
+
+    @router.delete(
+        "/delete_document",
+        response_model=DeleteDocByIdResponse,
+        dependencies=[Depends(combined_auth)],
+        summary="Delete a document and all its associated data by its ID.",
+    )
+    async def delete_document(
+        delete_request: DeleteDocRequest, background_tasks: BackgroundTasks,
+    ) -> DeleteDocByIdResponse:
+        result = await _delete_document(delete_request, background_tasks)
+        if result.status != "busy":
+            return result
+        job_id = await deletion_queue.submit(delete_request)
+        return DeleteDocByIdResponse(
+            status="deletion_queued", doc_id=", ".join(delete_request.doc_ids),
+            message=f"Deletion queued until ingestion finishes. Job: {job_id}",
+        )
+
+    @router.get("/deletion_jobs", dependencies=[Depends(combined_auth)])
+    async def deletion_jobs():
+        await deletion_queue.start()
+        return await deletion_queue.list_jobs()
 
     @router.post(
         "/clear_cache",
@@ -4686,6 +4693,7 @@ def create_document_routes(
                         rag.doc_status.get_docs_by_folder_ids(
                             folder_ids=effective_folder_ids,
                             status_filter=request.status_filter,
+                            status_filters=request.status_filters,
                             page=request.page,
                             page_size=request.page_size,
                             sort_field=request.sort_field,
@@ -4693,20 +4701,6 @@ def create_document_routes(
                         ),
                     )
                 )
-                # docs_task = asyncio.create_task(
-                #     _timed_call(
-                #         "get_docs_paginated",
-                #         rag.doc_status.get_docs_paginated(
-                #             status_filter=request.status_filter,
-                #             status_filters=request.status_filters,
-                #             page=request.page,
-                #             page_size=request.page_size,
-                #             sort_field=request.sort_field,
-                #             sort_direction=request.sort_direction,
-                #         ),
-
-                #     )
-                # )
                 status_counts_task = asyncio.create_task(
                     _timed_call(
                         "get_status_counts_by_folder_ids",
@@ -4721,6 +4715,7 @@ def create_document_routes(
                         "get_docs_paginated",
                         rag.doc_status.get_docs_paginated(
                             status_filter=request.status_filter,
+                            status_filters=request.status_filters,
                             page=request.page,
                             page_size=request.page_size,
                             sort_field=request.sort_field,

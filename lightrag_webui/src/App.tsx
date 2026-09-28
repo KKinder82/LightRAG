@@ -8,6 +8,7 @@ import { useBackendState, useAuthStore } from '@/stores/state'
 import { useSettingsStore } from '@/stores/settings'
 import { getAuthStatus } from '@/api/lightrag'
 import SiteHeader from '@/features/SiteHeader'
+import ProjectSelector from '@/components/ProjectSelector'
 import { InvalidApiKeyError, RequireApiKeError } from '@/api/lightrag'
 import { ZapIcon } from 'lucide-react'
 
@@ -205,6 +206,7 @@ function App() {
               onValueChange={handleTabChange}
             >
               <SiteHeader />
+              <ProjectSelector />
               <div className="relative grow">
                 <TabsContent value="documents" className="absolute top-0 right-0 bottom-0 left-0 overflow-auto">
                   <DocumentManager />

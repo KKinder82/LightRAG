@@ -997,6 +997,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         page_size: int = 50,
         sort_field: str = "updated_at",
         sort_direction: str = "desc",
+        status_filters: list[DocStatus] | None = None,
     ) -> "tuple[list[tuple[str, DocProcessingStatus]], int]":
         """Get documents filtered by folder IDs with pagination support.
 
@@ -1013,6 +1014,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         while True:
             batch, total = await self.get_docs_paginated(
                 status_filter=status_filter,
+                status_filters=status_filters,
                 page=cur_page,
                 page_size=batch_size,
                 sort_field=sort_field,

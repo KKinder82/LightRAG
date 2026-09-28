@@ -555,5 +555,14 @@
     "prevPage": "上一页",
     "nextPage": "下一页",
     "lastPage": "末页"
+  },
+  "dataset": {
+    "label": "项目数据集",
+    "default": "默认数据集",
+    "name": "新项目名称",
+    "create": "新建项目",
+    "fastIndex": "快速索引：只建文本向量，跳过知识图谱（请使用 naive 检索）",
+    "deletionQueued": "删除已排队，当前解析任务结束后自动执行。",
+    "deletionStatus": "删除队列：{{queued}} 项等待，{{failed}} 项失败"
   }
 }

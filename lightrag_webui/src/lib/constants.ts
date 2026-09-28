@@ -43,6 +43,14 @@ export const defaultQueryLabel = '*'
 
 // reference: https://developer.mozilla.org/en-US/docs/Web/HTTP/MIME_types/Common_types
 export const supportedFileTypes = {
+  'application/msword': ['.doc'],
+  'application/vnd.ms-powerpoint': ['.ppt'],
+  'application/vnd.ms-excel': ['.xls'],
+  'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/bmp': ['.bmp'],
+  'image/tiff': ['.tif', '.tiff'],
+  'image/webp': ['.webp'],
   'text/plain': [
     '.txt',
     '.md',

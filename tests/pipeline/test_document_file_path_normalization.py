@@ -1,4 +1,5 @@
 import sys
+from typing import get_type_hints
 
 import pytest
 
@@ -41,6 +42,11 @@ class DummyRAG:
 
     async def apipeline_process_enqueue_documents(self):
         self.processed = True
+
+
+def test_enqueue_type_annotations_resolve():
+    hints = get_type_hints(_PipelineMixin.apipeline_enqueue_documents)
+    assert hints["folder_id"] == str | None
 
 
 class CaptureDocStatus:

@@ -355,6 +355,8 @@ def test_carry_over_keys_grouped_by_stage():
     assert _DOC_STATUS_METADATA_CARRY_OVER_KEYS == (
         "process_options",
         "source_file_name",
+        "folder_ids",
+        "folder_id",
         "parse_warnings",
         "chunk_opts",
         "parsing_start_time",
@@ -364,6 +366,15 @@ def test_carry_over_keys_grouped_by_stage():
         "analyzing_end_time",
         "analyzing_stage_skipped",
     )
+
+
+@pytest.mark.offline
+def test_folder_references_survive_status_transitions():
+    from lightrag.utils_pipeline import doc_status_transition_metadata
+
+    metadata = {"folder_ids": ["folder-a", "folder-b"], "folder_id": "folder-a"}
+    result = doc_status_transition_metadata({"metadata": metadata})
+    assert result == metadata
 
 
 @pytest.mark.offline

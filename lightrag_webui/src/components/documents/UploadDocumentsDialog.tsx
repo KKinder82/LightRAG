@@ -43,6 +43,7 @@ export default function UploadDocumentsDialog({
 }: UploadDocumentsDialogProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [fastIndex, setFastIndex] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [progresses, setProgresses] = useState<Record<string, number>>({})
   const [fileErrors, setFileErrors] = useState<Record<string, string>>({})
@@ -129,6 +130,7 @@ export default function UploadDocumentsDialog({
             const result = await uploadDocument(
               file,
               {
+                fastIndex,
                 folderId:
                   selectedFolderId === NO_FOLDER_VALUE ? null : selectedFolderId
               },
@@ -228,7 +230,7 @@ export default function UploadDocumentsDialog({
         setIsUploading(false)
       }
     },
-    [setIsUploading, setProgresses, setFileErrors, t, onDocumentsUploaded, onUploadBatchAccepted, selectedFolderId]
+    [setIsUploading, setProgresses, setFileErrors, t, onDocumentsUploaded, onUploadBatchAccepted, selectedFolderId, fastIndex]
   )
 
   return (
@@ -257,6 +259,10 @@ export default function UploadDocumentsDialog({
             {t('documentPanel.uploadDocuments.description')}
           </DialogDescription>
         </DialogHeader>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={fastIndex} onChange={e => setFastIndex(e.target.checked)} disabled={isUploading} />
+          {t('dataset.fastIndex')}
+        </label>
         <div className="space-y-2">
           <div className="text-sm font-medium">
             {t('documentPanel.uploadDocuments.folder.label')}

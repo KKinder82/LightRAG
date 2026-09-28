@@ -5,6 +5,9 @@ import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/state'
 import { navigationService } from '@/services/navigation'
 
+// Keep each open page bound to its dataset until it explicitly reloads.
+export const activeProjectId = localStorage.getItem('LIGHTRAG-PROJECT') || ''
+
 // Types
 export type LightragNodeType = {
   id: string
@@ -270,7 +273,7 @@ export type ReprocessFailedResponse = {
 }
 
 export type DeleteDocResponse = {
-  status: 'deletion_started' | 'busy' | 'not_allowed'
+  status: 'deletion_started' | 'deletion_queued' | 'busy' | 'not_allowed'
   message: string
   doc_id: string
 }
@@ -439,6 +442,8 @@ const silentRefreshGuestToken = async (): Promise<string> => {
 
 // Interceptor: add api key and check authentication
 axiosInstance.interceptors.request.use((config) => {
+  const project = activeProjectId
+  if (project) config.headers['X-LightRAG-Project'] = project
   // Skip interceptor for token refresh requests
   if (config.headers['X-Skip-Interceptor']) {
     delete config.headers['X-Skip-Interceptor'];
@@ -690,6 +695,7 @@ export const queryTextStream = async (
   const apiKey = useSettingsStore.getState().apiKey;
   const token = localStorage.getItem('LIGHTRAG-API-TOKEN');
   const headers: HeadersInit = {
+    'X-LightRAG-Project': activeProjectId,
     'Content-Type': 'application/json',
     'Accept': 'application/x-ndjson',
   };
@@ -962,11 +968,13 @@ export const uploadDocument = async (
   file: File,
   options?: {
     folderId?: string | null
+    fastIndex?: boolean
   },
   onUploadProgress?: (percentCompleted: number) => void
 ): Promise<DocActionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('fast_index', String(options?.fastIndex ?? false))
   if (options?.folderId) {
     formData.append('folder_id', options.folderId)
   }
@@ -988,6 +996,7 @@ export const batchUploadDocuments = async (
   files: File[],
   options?: {
     folderId?: string | null
+    fastIndex?: boolean
   },
   onUploadProgress?: (fileName: string, percentCompleted: number) => void
 ): Promise<DocActionResponse[]> => {
@@ -1361,3 +1370,9 @@ export const getDocumentStatusCounts = async (): Promise<StatusCountsResponse> =
   const response = await axiosInstance.get('/documents/status_counts')
   return response.data
 }
+
+export type ProjectDataset = { id: string; name: string }
+export const listProjects = async (): Promise<ProjectDataset[]> => (await axiosInstance.get('/projects')).data
+export const createProject = async (name: string): Promise<ProjectDataset> => (await axiosInstance.post('/projects', { name })).data
+
+export const getDeletionJobs = async (): Promise<Record<string, { status: string }>> => (await axiosInstance.get('/documents/deletion_jobs')).data

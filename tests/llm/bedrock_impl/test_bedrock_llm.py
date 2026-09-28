@@ -450,6 +450,9 @@ class _FakeLightRAG:
     def __init__(self, **kwargs):
         type(self).last_init_kwargs = dict(kwargs)
         type(self).last_instance = self
+        self.workspace = kwargs.get("workspace", "")
+        # App construction also creates the folder namespace on the RAG KV factory.
+        self.key_string_value_json_storage_cls = Mock(return_value=AsyncMock())
         self.role_config_snapshot = {}
         for role, cfg in (kwargs.get("role_llm_configs") or {}).items():
             metadata = dict(getattr(cfg, "metadata", None) or {})

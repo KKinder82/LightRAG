@@ -5,7 +5,7 @@ import asyncio
 import os
 import time
 import warnings
-from copy import deepcopy
+from copy import copy, deepcopy
 
 try:
     import httpx
@@ -804,7 +804,13 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     def _build_global_config(self) -> dict[str, Any]:
         # MARK: 构建全局配置
         self._ensure_addon_params_cache()
-        global_config = asdict(self)
+        # FolderManager owns live storage locks, including ContextVars. Exclude
+        # it before asdict deep-copies fields; it is a runtime service, not config.
+        # Copy the dataclass shell so concurrent users retain the live manager.
+        config_source = copy(self)
+        config_source.folder_manager = None
+        global_config = asdict(config_source)
+        global_config.pop("folder_manager", None)
         global_config.pop("_addon_params", None)
         global_config.pop("_addon_params_dirty", None)
         global_config.pop("_cached_entity_extraction_use_json", None)

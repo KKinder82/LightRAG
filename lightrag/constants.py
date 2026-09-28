@@ -143,6 +143,8 @@ PARSER_ENGINE_SUFFIX_CAPABILITIES = {
             "md",
             "mdx",
             "pdf",
+            "doc", "ppt", "xls",
+            "png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp",
             "docx",
             "pptx",
             "xlsx",

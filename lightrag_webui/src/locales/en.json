@@ -555,5 +555,14 @@
     "prevPage": "Previous Page",
     "nextPage": "Next Page",
     "lastPage": "Last Page"
+  },
+  "dataset": {
+    "label": "Project dataset",
+    "default": "Default dataset",
+    "name": "New project name",
+    "create": "Create project",
+    "fastIndex": "Fast index: text vectors only, skip knowledge graph (use naive retrieval)",
+    "deletionQueued": "Deletion queued; it will run after current ingestion finishes.",
+    "deletionStatus": "Deletion queue: {{queued}} pending, {{failed}} failed"
   }
 }
