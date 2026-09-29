@@ -157,6 +157,39 @@ async def test_no_gleaning_when_max_gleaning_zero(monkeypatch):
 
 @pytest.mark.offline
 @pytest.mark.asyncio
+async def test_chunk_timeout_retries_only_the_failed_chunk(monkeypatch):
+    from lightrag.operate import extract_entities
+
+    monkeypatch.setenv("EXTRACT_CHUNK_TIMEOUT_RETRIES", "1")
+    config = _make_global_config(entity_extract_max_gleaning=0)
+    llm_func = config["llm_model_func"]
+    llm_func.side_effect = [TimeoutError("worker execution timeout"), _EXTRACTION_RESULT]
+
+    result = await extract_entities(chunks=_make_chunks(), global_config=config)
+
+    assert llm_func.await_count == 2
+    assert len(result) == 1
+    assert "TEST_ENTITY" in result[0][0]
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_chunk_timeout_still_fails_after_bounded_retry(monkeypatch):
+    from lightrag.operate import extract_entities
+
+    monkeypatch.setenv("EXTRACT_CHUNK_TIMEOUT_RETRIES", "1")
+    config = _make_global_config(entity_extract_max_gleaning=0)
+    llm_func = config["llm_model_func"]
+    llm_func.side_effect = TimeoutError("worker execution timeout")
+
+    with pytest.raises(TimeoutError, match="chunk-001"):
+        await extract_entities(chunks=_make_chunks(), global_config=config)
+
+    assert llm_func.await_count == 2
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
 async def test_gleaning_guard_disabled_when_max_tokens_zero(monkeypatch):
     """Setting ``MAX_EXTRACT_INPUT_TOKENS=0`` opts out of the guard so
     gleaning always runs regardless of input size — useful for callers

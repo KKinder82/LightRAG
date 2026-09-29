@@ -3464,7 +3464,7 @@ def create_document_routes(
                         allow_duplicate_content=True, fast_index=fast_index,
                     )
                     if success:
-                        await rag.apipeline_process_enqueue_documents()
+                        await rag.apipeline_process_enqueue_documents(retry_failed=False)
                 finally:
                     # 最后释放预留的插槽，无论任务成功与否都要确保释放，以避免死锁。
                     await _release_enqueue_slot(rag)

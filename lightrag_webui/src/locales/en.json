@@ -102,7 +102,7 @@
       },
       "batch": {
         "uploading": "Uploading files...",
-        "success": "Files uploaded successfully",
+        "success": "Files received and queued for parsing and indexing; searchable once processing completes",
         "error": "Some files failed to upload"
       },
       "generalError": "Upload Failed\n{{error}}",

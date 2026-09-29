@@ -46,6 +46,7 @@ async def upload_app(tmp_path, monkeypatch):
     input_dir = tmp_path / "inputs"
     monkeypatch.setenv("INPUT_DIR", str(input_dir))
     monkeypatch.setenv("LIGHTRAG_PARSER", "*:legacy")
+    monkeypatch.setenv("LIGHTRAG_OCR_ENGINE", "auto")
     rag = LightRAG(
         working_dir=str(tmp_path / "storage"),
         workspace=f"upload-{uuid4().hex}",
@@ -305,3 +306,107 @@ async def test_vlm_failure_is_visible_and_later_upload_recovers(upload_app, monk
     )
     docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
     assert next(iter(docs.values())).status.value == "processed"
+
+
+@pytest.mark.parametrize("extension", ["doc", "xls"])
+async def test_real_legacy_office_upload_and_repeat(upload_app, tmp_path, extension):
+    """Exercise real legacy binary files, not renamed XML or mocked conversion."""
+    import shutil
+    import subprocess
+
+    converter = shutil.which("libreoffice") or shutil.which("soffice")
+    if not converter:
+        pytest.skip("LibreOffice is required for real legacy Office conversion")
+    if extension == "doc":
+        from docx import Document
+        original = tmp_path / "office-source.docx"
+        document = Document()
+        document.add_paragraph("Legacy office acceptance 6418")
+        document.save(original)
+    else:
+        from openpyxl import Workbook
+        original = tmp_path / "office-source.xlsx"
+        workbook = Workbook()
+        workbook.active.append(["Legacy office acceptance", "6418"])
+        workbook.save(original)
+    subprocess.run(
+        [converter, f"-env:UserInstallation={(tmp_path / 'lo-profile').as_uri()}",
+         "--headless", "--convert-to", extension, "--outdir", str(tmp_path), str(original)],
+        check=True, capture_output=True, timeout=120,
+    )
+    content = (tmp_path / f"office-source.{extension}").read_bytes()
+    assert content.startswith(bytes.fromhex("d0cf11e0a1b11ae1"))
+    client, rag, folder, _ = upload_app
+    ids = []
+    for _ in range(2):
+        response = await client.post(
+            "/documents/upload",
+            files={"file": (f"legacy.{extension.upper()}", content, "application/octet-stream")},
+            data={"folder_id": folder.id, "fast_index": "true"},
+        )
+        assert response.status_code == 200, response.text
+        docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
+        doc_id, doc = next(iter(docs.items()))
+        assert doc.status.value == "processed", doc.error_msg
+        assert "6418" in (await rag.full_docs.get_by_id(doc_id))["content"]
+        assert folder.id in doc.metadata["folder_ids"]
+        ids.append(doc_id)
+    assert len(set(ids)) == 2
+
+
+async def test_new_upload_does_not_retry_previous_analysis_failure(upload_app, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client, rag, _, _ = upload_app
+    await rag.apipeline_enqueue_documents(
+        "Old content whose model analysis failed", file_paths="old-failed.txt",
+    )
+    old = await rag.doc_status.get_docs_by_status(routes.DocStatus.PENDING)
+    old_id = next(iter(old))
+    row = await rag.doc_status.get_by_id(old_id)
+    row.update(status="failed", error_msg="Previous model analysis timed out")
+    await rag.doc_status.upsert({old_id: row})
+    model = AsyncMock(side_effect=AssertionError("Old failed document must not run"))
+    rag.update_llm_role_config("extract", model_func=model)
+    response = await client.post(
+        "/documents/upload", files={"file": ("new-only.txt", b"New content should be indexed")},
+        data={"fast_index": "true"},
+    )
+    assert response.status_code == 200
+    docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
+    assert next(iter(docs.values())).status.value == "processed"
+    model.assert_not_awaited()
+    old_row = await rag.doc_status.get_by_id(old_id)
+    assert old_row["status"] == "failed"
+    assert old_row["error_msg"] == "Previous model analysis timed out"
+
+    rag.update_llm_role_config("extract", model_func=fake_llm)
+    response = await client.post("/documents/reprocess_failed")
+    assert response.status_code == 200
+    assert (await rag.doc_status.get_by_id(old_id))["status"] == "processed"
+
+
+async def test_explicit_retry_requested_during_upload_is_not_lost(upload_app, monkeypatch):
+    _, rag, _, _ = upload_app
+    await rag.apipeline_enqueue_documents("Old failed analysis", file_paths="retry-old.txt")
+    old_id = next(iter(await rag.doc_status.get_docs_by_status(routes.DocStatus.PENDING)))
+    old = await rag.doc_status.get_by_id(old_id)
+    old.update(status="failed", error_msg="Model error")
+    await rag.doc_status.upsert({old_id: old})
+    await rag.apipeline_enqueue_documents("New pending content", file_paths="retry-new.txt")
+    original_batch = rag._run_pipeline_batch
+    batches = []
+
+    async def batch(documents, **kwargs):
+        batches.append(set(documents))
+        if len(batches) == 1:
+            assert old_id not in documents
+            # Model an explicit retry API call arriving while the upload is busy.
+            await rag.apipeline_process_enqueue_documents()
+        await original_batch(documents, **kwargs)
+
+    monkeypatch.setattr(rag, "_run_pipeline_batch", batch)
+    await rag.apipeline_process_enqueue_documents(retry_failed=False)
+    assert len(batches) == 2
+    assert old_id in batches[1]
+    assert (await rag.doc_status.get_by_id(old_id))["status"] == "processed"

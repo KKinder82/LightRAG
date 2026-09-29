@@ -102,7 +102,7 @@
       },
       "batch": {
         "uploading": "正在上传文件...",
-        "success": "文件上传完成",
+        "success": "文件已接收，正在排队解析和入库；处理完成后可检索",
         "error": "部分文件上传失败"
       },
       "generalError": "上传失败\n{{error}}",

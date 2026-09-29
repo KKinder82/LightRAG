@@ -3580,27 +3580,39 @@ async def extract_entities(
     # Get max async tasks limit from global_config
     chunk_max_async = global_config.get("llm_model_max_async", 4)
     semaphore = asyncio.Semaphore(chunk_max_async)
+    timeout_retries = max(
+        0, get_env_value("EXTRACT_CHUNK_TIMEOUT_RETRIES", 1, int)
+    )
 
     async def _process_with_semaphore(chunk):
         async with semaphore:
-            # MARK: 检pipeline是否有取消.
-            if pipeline_status is not None and pipeline_status_lock is not None:
-                async with pipeline_status_lock:
-                    if pipeline_status.get("cancellation_requested", False):
-                        raise PipelineCancelledException(
-                            "User cancelled during chunk processing"
-                        )
+            for attempt in range(timeout_retries + 1):
+                # Check cancellation again before a retry starts.
+                if pipeline_status is not None and pipeline_status_lock is not None:
+                    async with pipeline_status_lock:
+                        if pipeline_status.get("cancellation_requested", False):
+                            raise PipelineCancelledException(
+                                "User cancelled during chunk processing"
+                            )
 
-            try:
-                result = await _process_single_content(chunk)
-                # Yield once between chunk completions so API coroutines can resume
-                # even when many chunk tasks are hitting cache and finishing quickly.
-                await asyncio.sleep(0)
-                return result
-            except Exception as e:
-                chunk_id = chunk[0]  # Extract chunk_id from chunk[0]
-                prefixed_exception = create_prefixed_exception(e, chunk_id)
-                raise prefixed_exception from e
+                try:
+                    result = await _process_single_content(chunk)
+                    # Let API coroutines resume after cached chunks finish quickly.
+                    await asyncio.sleep(0)
+                    return result
+                except TimeoutError as e:
+                    if attempt < timeout_retries:
+                        logger.warning(
+                            "Chunk %s extraction timed out; retrying (%s/%s): %s",
+                            chunk[0], attempt + 1, timeout_retries, e,
+                        )
+                        await asyncio.sleep(min(2**attempt, 5))
+                        continue
+                    prefixed_exception = create_prefixed_exception(e, chunk[0])
+                    raise prefixed_exception from e
+                except Exception as e:
+                    prefixed_exception = create_prefixed_exception(e, chunk[0])
+                    raise prefixed_exception from e
 
     #MARK: 任务(每一个块儿)
     tasks = []

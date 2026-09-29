@@ -1037,13 +1037,18 @@ class _PipelineMixin:
                 )
 
     #NEXT:
-    async def apipeline_process_enqueue_documents(self) -> None:
+    async def apipeline_process_enqueue_documents(
+        self, *, retry_failed: bool = True
+    ) -> None:
         """
         Process pending documents by splitting them into chunks, processing
         each chunk for entity and relation extraction, and updating the
         document status.
 
-        1. Get all pending, failed, and abnormally terminated processing documents.
+        ``retry_failed=False`` keeps historical failures out of ordinary uploads.
+        Explicit retry and scan callers retain the default recovery behavior.
+
+        1. Get pending, optionally failed, and interrupted processing documents.
         2. Validate document data consistency and fix any issues
         3. Split document content into chunks
         4. Process each chunk for entity and relation extraction
@@ -1056,6 +1061,21 @@ class _PipelineMixin:
             "pipeline_status", workspace=self.workspace
         )
 
+        def requested_statuses() -> list[DocStatus]:
+            # Caller holds pipeline_status_lock. Explicit retries requested
+            # during a running upload batch must survive its next queue read.
+            requested_retry = pipeline_status.pop("retry_failed_requested", False)
+            include_failed = retry_failed or requested_retry
+            return [
+                status for status in _INFLIGHT_DOC_STATUSES
+                if include_failed or status != DocStatus.FAILED
+            ]
+
+        async def read_queued_documents() -> dict[str, DocProcessingStatus]:
+            async with pipeline_status_lock:
+                statuses = requested_statuses()
+            return await self.doc_status.get_docs_by_statuses(statuses)
+
         # to_process_docs 是一个字典，键是 doc_id，值是 DocProcessingStatus 对象，表示待处理的文档及其状态信息。
 
         async with pipeline_status_lock:
@@ -1065,7 +1085,7 @@ class _PipelineMixin:
                 to_process_docs: dict[
                     str, DocProcessingStatus
                 ] = await self.doc_status.get_docs_by_statuses(
-                    list(_INFLIGHT_DOC_STATUSES)
+                    requested_statuses()
                 )
                 if not to_process_docs:
                     #　没有要自理的文档.
@@ -1093,6 +1113,8 @@ class _PipelineMixin:
                 # Another process is busy, just set request flag and return
                 # MARK:　忙碌中，设置请求标志并返回,　请求被排队了
                 pipeline_status["request_pending"] = True
+                if retry_failed:
+                    pipeline_status["retry_failed_requested"] = True
                 logger.info(
                     "Another process is already processing the document queue. Request queued."
                 )
@@ -1119,6 +1141,7 @@ class _PipelineMixin:
                     if pipeline_status.get("cancellation_requested", False):
                         #　MARK: 有取消请求，清理状态并退出.(不要处理了, 直接退出)
                         pipeline_status["request_pending"] = False  # 清除请求标志，取消当前和排队的请求
+                        pipeline_status.pop("retry_failed_requested", None)
                         pipeline_status["cancellation_requested"] = False # 清除取消标志
 
                         log_message = "Pipeline cancelled by user"
@@ -1142,9 +1165,7 @@ class _PipelineMixin:
                         busy_released_in_loop = True
                         break
                     # MARK: 可能是有新的文档被加入了，重新获取待处理的文档
-                    to_process_docs = await self.doc_status.get_docs_by_statuses(
-                        list(_INFLIGHT_DOC_STATUSES)
-                    )
+                    to_process_docs = await read_queued_documents()
                     continue
 
                 # Validate document data consistency and fix any issues
@@ -1168,9 +1189,7 @@ class _PipelineMixin:
                         busy_released_in_loop = True
                         break
                     # 重启获取
-                    to_process_docs = await self.doc_status.get_docs_by_statuses(
-                        list(_INFLIGHT_DOC_STATUSES)
-                    )
+                    to_process_docs = await read_queued_documents()
                     continue  # 继续检查. 
 
                 # GROUP: 一致性检查后, 仍然有文档
@@ -1213,9 +1232,7 @@ class _PipelineMixin:
 
                 # Check for pending documents again
                 #　获取新任务
-                to_process_docs = await self.doc_status.get_docs_by_statuses(
-                    list(_INFLIGHT_DOC_STATUSES)
-                )
+                to_process_docs = await read_queued_documents()
 
         finally:
             # MARK: 日志 
