@@ -1,6 +1,8 @@
 """PDF and image OCR tests without network model dependencies."""
 
+import base64
 from io import BytesIO
+import random
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -51,6 +53,21 @@ async def test_image_ocr_uses_vlm_image_inputs(rag, suffix, format):
     assert call.kwargs["stream"] is False
     assert call.kwargs["image_inputs"][0]["mime_type"] == "image/png"
     assert call.kwargs["image_inputs"][0]["base64"]
+
+
+async def test_large_image_is_compressed_before_vlm_request(rag, monkeypatch):
+    monkeypatch.setenv("LIGHTRAG_OCR_VLM_MAX_IMAGE_BYTES", "50000")
+    image = Image.frombytes("RGB", (900, 900), random.Random(42).randbytes(900 * 900 * 3))
+    stream = BytesIO()
+    image.save(stream, format="PNG")
+
+    await ocr.extract_visual_document(rag, stream.getvalue(), ".png")
+
+    payload = rag.role_llm_funcs["vlm"].call_args.kwargs["image_inputs"][0]
+    assert payload["mime_type"] == "image/jpeg"
+    encoded = base64.b64decode(payload["base64"])
+    assert len(encoded) <= 50000
+    assert Image.open(BytesIO(encoded)).format == "JPEG"
 
 
 async def test_mixed_pdf_only_ocr_scanned_pages_in_order(rag, monkeypatch):

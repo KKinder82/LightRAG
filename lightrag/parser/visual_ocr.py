@@ -47,6 +47,30 @@ def _image_frame(data: bytes, frame: int) -> tuple[bytes, int]:
         return output.getvalue(), frames
 
 
+def _vlm_image_payload(image: bytes) -> tuple[bytes, str]:
+    """Keep base64 image requests below common reverse-proxy body limits."""
+    from PIL import Image
+
+    max_bytes = _setting("LIGHTRAG_OCR_VLM_MAX_IMAGE_BYTES", 600_000, 5_000_000)
+    if len(image) <= max_bytes:
+        return image, "image/png"
+
+    with Image.open(BytesIO(image)) as source:
+        normalized = source.convert("RGB")
+        for _ in range(12):
+            for quality in (90, 80, 70, 60):
+                output = BytesIO()
+                normalized.save(output, format="JPEG", quality=quality, optimize=True)
+                if output.tell() <= max_bytes:
+                    return output.getvalue(), "image/jpeg"
+            normalized.thumbnail(
+                (max(1, int(normalized.width * 0.8)),
+                 max(1, int(normalized.height * 0.8))),
+                Image.Resampling.LANCZOS,
+            )
+    raise ValueError("Image could not be compressed for VLM OCR")
+
+
 def _pdf_pages(data: bytes, password: str | None) -> tuple[list[str], bytes]:
     from pypdf import PdfReader, PdfWriter
 
@@ -99,12 +123,13 @@ async def _recognize(rag: Any, image: bytes, engine: str) -> str:
     if engine == "tesseract":
         text = await asyncio.to_thread(extract_legacy_or_image, image, ".png", {})
     else:
+        payload, mime_type = await asyncio.to_thread(_vlm_image_payload, image)
         text = await rag.role_llm_funcs["vlm"](
             OCR_PROMPT,
             stream=False,
             image_inputs=[{
-                "base64": base64.b64encode(image).decode("ascii"),
-                "mime_type": "image/png",
+                "base64": base64.b64encode(payload).decode("ascii"),
+                "mime_type": mime_type,
             }],
         )
     if not isinstance(text, str):
