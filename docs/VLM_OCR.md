@@ -2,7 +2,8 @@
 
 The upload dialog accepts PDF, PNG, JPG/JPEG, BMP, TIF/TIFF and WebP. The legacy
 parser extracts PDF text page by page; pages without a text layer are rendered
-with Poppler and passed to OCR. Multipage TIFF images are read in order. OCR text
+with Poppler and passed to the VLM role for OCR. PDF pages with extractable text
+are read directly without rendering or model calls. Multipage TIFF images are read in order. OCR text
 enters the normal document chunking/indexing pipeline and retains folder metadata.
 
 Enable a vision-capable model through the existing VLM role:
@@ -10,21 +11,22 @@ Enable a vision-capable model through the existing VLM role:
 ```dotenv
 VLM_PROCESS_ENABLE=true
 LIGHTRAG_OCR_ENGINE=vlm
-LIGHTRAG_PDF_OCR_MODE=auto
 # Set VLM_LLM_BINDING, VLM_LLM_BINDING_HOST, VLM_LLM_MODEL and
 # VLM_LLM_BINDING_API_KEY if the vision model differs from the base LLM.
 ```
 
-`LIGHTRAG_OCR_ENGINE=auto` uses VLM when enabled, otherwise local Tesseract.
+`LIGHTRAG_OCR_ENGINE` applies only to standalone images: `auto` uses VLM when
+enabled, otherwise local Tesseract. Scanned PDF pages always require VLM.
 Explicit `vlm` fails clearly if the VLM role is unavailable. Model errors do not
 silently switch OCR engines or omit failed pages. A document with no readable text
 is marked failed. The document status/track endpoint reports background failures;
 a successful upload response alone does not establish successful indexing.
 
-`LIGHTRAG_PDF_OCR_MODE=auto` uses existing PDF text and OCRs textless pages.
-Use `always` for PDFs with broken text layers or images alongside selectable text;
-this renders every page. `never` extracts only the text layer. Extracted PDF text
-contains `[Page N]` markers. OCR recognizes text, not arbitrary picture descriptions.
+PDF extraction always reads available text and uses VLM OCR only for textless
+pages, including mixed PDFs, in original page order. The former
+`LIGHTRAG_PDF_OCR_MODE` setting is no longer used (`always` and `never` do not
+override this behavior). Extracted PDF text contains `[Page N]` markers.
+OCR recognizes text, not arbitrary picture descriptions.
 
 Use the legacy parser for these formats, for example `*:native-teP,*:legacy-R`
 (the existing default fallback), or `*.pdf:legacy-R,*.png:legacy-R,*:legacy-R`.

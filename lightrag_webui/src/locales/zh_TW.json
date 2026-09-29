@@ -416,6 +416,12 @@
       "queryModePrefixInvalid": "無效的查詢模式前綴。請使用：/<模式> [空格] 查詢內容"
     },
     "querySettings": {
+      "folder": "資料夾",
+      "allFolders": "不限資料夾",
+      "includeSubfolders": "包含子資料夾",
+      "folderHint": "未選擇資料夾時，檢索全部文件。",
+      "folderLoadError": "資料夾載入失敗。",
+      "retryFolders": "重試",
       "parametersTitle": "參數",
       "parametersDescription": "設定查詢參數",
       "queryMode": "查詢模式",

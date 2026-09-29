@@ -493,6 +493,12 @@
       "queryModePrefixInvalid": "Invalid query mode prefix. Use: /<mode> [space] your query"
     },
     "querySettings": {
+      "folder": "Folder",
+      "allFolders": "All folders",
+      "includeSubfolders": "Include subfolders",
+      "folderHint": "No folder selected means all documents.",
+      "folderLoadError": "Failed to load folders.",
+      "retryFolders": "Retry",
       "parametersTitle": "Parameters",
       "parametersDescription": "Configure your query parameters",
       "queryMode": "Query Mode",

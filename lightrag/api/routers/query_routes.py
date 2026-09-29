@@ -3,8 +3,8 @@ This module contains all query-related routes for the LightRAG API.
 """
 
 import json
-from typing import Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated, Any, Dict, List, Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from lightrag.base import QueryParam
 from lightrag.api.utils_api import get_combined_auth_dependency
 from lightrag.utils import logger
@@ -111,7 +111,7 @@ class QueryRequest(BaseModel):
     folder_id: Optional[str] = Field(
         default=None,
         description="Restrict query scope to documents within a specific folder. "
-        "None means query all documents. "
+        "Omitted, null, empty or whitespace-only means query all documents. "
         "When set, only documents belonging to this folder (and optionally its sub-folders) "
         "are used for retrieval.",
     )
@@ -121,6 +121,11 @@ class QueryRequest(BaseModel):
         description="When folder_id is set, also include documents from sub-folders. "
         "Ignored when folder_id is None.",
     )
+
+    @field_validator("folder_id", mode="after")
+    @classmethod
+    def normalize_folder_id(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
     @field_validator("query", mode="after")
     @classmethod
@@ -141,19 +146,36 @@ class QueryRequest(BaseModel):
                 raise ValueError("Each message 'role' must be a non-empty string.")
         return conversation_history
 
-    def to_query_params(self, is_stream: bool) -> "QueryParam":
+    def to_query_params(
+        self,
+        is_stream: bool,
+        folder_id: str | None = None,
+        include_subfolders: bool | None = None,
+    ) -> "QueryParam":
         """Converts a QueryRequest instance into a QueryParam instance."""
         # Use Pydantic's `.model_dump(exclude_none=True)` to remove None values automatically
         # Exclude API-level parameters that don't belong in QueryParam
         request_data = self.model_dump(
             exclude_none=True,
-            exclude={"query", "include_chunk_content", "folder_id", "include_subfolders"},
+            exclude={
+                "query",
+                "include_chunk_content",
+                "folder_id",
+                "include_subfolders",
+            },
         )
 
         # Build folder_ids list from the single folder_id parameter
-        if self.folder_id is not None:
-            request_data["folder_ids"] = [self.folder_id]
-        request_data["include_subfolders"] = self.include_subfolders
+        selected_folder = (
+            self.folder_id if folder_id is None else self.normalize_folder_id(folder_id)
+        )
+        if selected_folder is not None:
+            request_data["folder_ids"] = [selected_folder]
+        request_data["include_subfolders"] = (
+            self.include_subfolders
+            if include_subfolders is None
+            else include_subfolders
+        )
 
         # Ensure `mode` and `stream` are set explicitly
         param = QueryParam(**request_data)
@@ -346,7 +368,21 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             },
         },
     )
-    async def query_text(request: QueryRequest):
+    async def query_text(
+        request: QueryRequest,
+        folder_id: Annotated[
+            Optional[str],
+            Query(
+                description="Folder ID; empty means all folders. Overrides the JSON body when supplied."
+            ),
+        ] = None,
+        include_subfolders: Annotated[
+            Optional[bool],
+            Query(
+                description="Include descendant folders (default true). Overrides the JSON body when supplied."
+            ),
+        ] = None,
+    ):
         """
         Comprehensive RAG query endpoint with non-streaming response. Parameter "stream" is ignored.
 
@@ -427,7 +463,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
         """
         try:
             param = request.to_query_params(
-                False
+                False, folder_id, include_subfolders
             )  # Ensure stream=False for non-streaming endpoint
             # Force stream=False for /query endpoint regardless of include_references setting
             param.stream = False
@@ -556,7 +592,21 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             },
         },
     )
-    async def query_text_stream(request: QueryRequest):
+    async def query_text_stream(
+        request: QueryRequest,
+        folder_id: Annotated[
+            Optional[str],
+            Query(
+                description="Folder ID; empty means all folders. Overrides the JSON body when supplied."
+            ),
+        ] = None,
+        include_subfolders: Annotated[
+            Optional[bool],
+            Query(
+                description="Include descendant folders (default true). Overrides the JSON body when supplied."
+            ),
+        ] = None,
+    ):
         """
         Advanced RAG query endpoint with flexible streaming response.
 
@@ -686,7 +736,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
         try:
             # Use the stream parameter from the request, defaulting to True if not specified
             stream_mode = request.stream if request.stream is not None else True
-            param = request.to_query_params(stream_mode)
+            param = request.to_query_params(stream_mode, folder_id, include_subfolders)
 
             from fastapi.responses import StreamingResponse
 
@@ -1059,7 +1109,21 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             },
         },
     )
-    async def query_data(request: QueryRequest):
+    async def query_data(
+        request: QueryRequest,
+        folder_id: Annotated[
+            Optional[str],
+            Query(
+                description="Folder ID; empty means all folders. Overrides the JSON body when supplied."
+            ),
+        ] = None,
+        include_subfolders: Annotated[
+            Optional[bool],
+            Query(
+                description="Include descendant folders (default true). Overrides the JSON body when supplied."
+            ),
+        ] = None,
+    ):
         """
         Advanced data retrieval endpoint for structured RAG analysis.
 
@@ -1163,7 +1227,9 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             as structured data analysis typically requires source attribution.
         """
         try:
-            param = request.to_query_params(False)  # No streaming for data endpoint
+            param = request.to_query_params(
+                False, folder_id, include_subfolders
+            )  # No streaming for data endpoint
             response = await rag.aquery_data(request.query, param=param)
 
             # aquery_data returns the new format with status, message, data, and metadata

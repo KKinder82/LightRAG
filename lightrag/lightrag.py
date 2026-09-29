@@ -2156,9 +2156,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     expanded_set.update(descendants)
                 folder_ids = list(expanded_set)
             except Exception:
-                logger.warning(
-                    "Failed to expand sub-folders; using original folder list."
-                )
+                logger.exception("Failed to expand query sub-folders")
+                raise
 
         try:
             doc_ids = await self.doc_status.get_doc_ids_by_folder_ids(folder_ids)
@@ -2169,6 +2168,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 param.filter_doc_ids = set()
         except Exception as e:
             logger.warning(f"Failed to resolve folder_ids to doc_ids: {e}")
+            raise
 
     def query_data(
         self,
@@ -2322,6 +2322,9 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             conversation_history=param.conversation_history,
             user_prompt=param.user_prompt,
             enable_rerank=param.enable_rerank,
+            folder_ids=param.folder_ids,
+            include_subfolders=param.include_subfolders,
+            filter_doc_ids=param.filter_doc_ids,
         )
 
         query_result = None

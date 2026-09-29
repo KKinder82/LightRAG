@@ -550,6 +550,24 @@ Open WebUI 使用 LLM 来执行会话标题和会话关键词生成任务。因�
 
 ![image-20250323194750379](./LightRAG-API-Server.assets/image-20250323194750379.png)
 
+### 按文件夹限定查询范围
+
+`POST /query`、`POST /query/stream`、`POST /query/data` 均支持：
+
+- `folder_id`：文件夹 ID。省略、JSON `null`、空字符串或纯空白表示不限文件夹。
+- `include_subfolders`：是否包含子文件夹，默认为 `true`；未限定文件夹时忽略此参数。
+
+两个参数可放在 JSON 请求体或 URL 查询字符串中；同一字段同时出现时，以 URL 参数为准。例如：
+
+```http
+POST /query/data?folder_id=your-folder-id&include_subfolders=false
+Content-Type: application/json
+
+{"query": "请概括这些文档", "mode": "mix"}
+```
+
+空文件夹返回无检索结果。WebUI 检索设置中的“文件夹”下拉框显示文件夹路径，选择“不限文件夹”即可清除范围限制，“包含子文件夹”复选框控制递归检索。切换项目时会清除所选文件夹。
+
 ### 在聊天中选择查询模式
 
 如果您从 LightRAG 的 Ollama 接口发送消息（查询），默认查询模式是 `hybrid`。您可以通过发送带有查询前缀的消息来选择查询模式。

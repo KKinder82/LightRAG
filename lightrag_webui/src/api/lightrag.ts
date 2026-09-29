@@ -180,6 +180,10 @@ export type Message = {
 }
 
 export type QueryRequest = {
+  /** Empty or omitted means all folders. */
+  folder_id?: string | null
+  /** Include descendant folders; defaults to true. */
+  include_subfolders?: boolean
   query: string
   /** Specifies the retrieval mode. */
   mode: QueryMode

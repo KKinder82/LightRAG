@@ -87,3 +87,35 @@ async def test_naive_query_partitions_query_cache_by_llm_identity():
     assert second.content == "answer-2"
     assert calls == 2
     assert len(cache._store) == 2
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_naive_query_partitions_cache_by_document_scope():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    cache = _FakeKVStorage()
+    calls = 0
+
+    async def query_model(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return f"answer-{calls}"
+
+    db = SimpleNamespace(
+        get_by_ids=AsyncMock(return_value=[{"full_doc_id": "shared-doc"}])
+    )
+    answers = []
+    for scope in [None, {"shared-doc"}, {"shared-doc", "other-doc"}, {"shared-doc"}]:
+        result = await naive_query(
+            "same query",
+            _FakeChunksVDB(),
+            QueryParam(mode="naive", enable_rerank=False, filter_doc_ids=scope),
+            _query_global_config("model-a", query_model),
+            hashing_kv=cache,
+            text_chunks_db=db,
+        )
+        answers.append(result.content)
+    assert answers == ["answer-1", "answer-2", "answer-3", "answer-2"]
+    assert calls == 3

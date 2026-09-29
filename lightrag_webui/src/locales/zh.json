@@ -493,6 +493,12 @@
       "queryModePrefixInvalid": "无效的查询模式前缀。请使用：/<模式> [空格] 查询内容"
     },
     "querySettings": {
+      "folder": "文件夹",
+      "allFolders": "不限文件夹",
+      "includeSubfolders": "包含子文件夹",
+      "folderHint": "未选择文件夹时，检索全部文档。",
+      "folderLoadError": "文件夹加载失败。",
+      "retryFolders": "重试",
       "parametersTitle": "参数",
       "parametersDescription": "配置查询参数",
       "queryMode": "查询模式",

@@ -3805,6 +3805,9 @@ async def kg_query(
         ll_keywords_str,
         query_param.user_prompt or "",
         query_param.enable_rerank,
+        sorted(query_param.filter_doc_ids)
+        if query_param.filter_doc_ids is not None
+        else None,
         "\n<llm_identity>\n",
         serialize_llm_cache_identity(llm_cache_identity),
     )
@@ -4202,10 +4205,10 @@ async def _filter_entities_relations_by_doc_ids(
     belong to the given document IDs.
 
     Returns filtered (entities, relations) tuples.  When *filter_doc_ids*
-    is empty or None the original lists are returned unchanged.
+    is empty, no entities or relations are returned.
     """
     if not filter_doc_ids:
-        return entities, relations
+        return [], []
 
     # Collect all unique chunk IDs referenced by entities and relations
     all_chunk_ids: set[str] = set()
@@ -4218,7 +4221,7 @@ async def _filter_entities_relations_by_doc_ids(
                     all_chunk_ids.add(cid)
 
     if not all_chunk_ids:
-        return entities, relations
+        return [], []
 
     # Batch-fetch chunk records to resolve chunk_id -> full_doc_id
     try:
@@ -4231,7 +4234,7 @@ async def _filter_entities_relations_by_doc_ids(
                 allowed_chunk_ids.add(cid)
     except Exception as e:
         logger.warning(f"Failed to resolve chunk doc IDs for filtering: {e}")
-        return entities, relations
+        raise
 
     if not allowed_chunk_ids:
         return [], []
@@ -4242,9 +4245,7 @@ async def _filter_entities_relations_by_doc_ids(
         source_str = entity.get("source_id", "")
         if source_str:
             entity_chunk_ids = {
-                c.strip()
-                for c in source_str.split(graph_field_sep)
-                if c.strip()
+                c.strip() for c in source_str.split(graph_field_sep) if c.strip()
             }
             if entity_chunk_ids & allowed_chunk_ids:
                 filtered_entities.append(entity)
@@ -4255,9 +4256,7 @@ async def _filter_entities_relations_by_doc_ids(
         source_str = relation.get("source_id", "")
         if source_str:
             rel_chunk_ids = {
-                c.strip()
-                for c in source_str.split(graph_field_sep)
-                if c.strip()
+                c.strip() for c in source_str.split(graph_field_sep) if c.strip()
             }
             if rel_chunk_ids & allowed_chunk_ids:
                 filtered_relations.append(relation)
@@ -4280,7 +4279,7 @@ async def _filter_chunks_by_doc_ids(
 ) -> list[dict]:
     """Filter chunks to only those whose full_doc_id is in the allowed set."""
     if not filter_doc_ids:
-        return chunks
+        return []
 
     # Collect all chunk IDs
     chunk_ids = []
@@ -4290,7 +4289,7 @@ async def _filter_chunks_by_doc_ids(
             chunk_ids.append(cid)
 
     if not chunk_ids:
-        return chunks
+        return []
 
     try:
         chunk_records = await text_chunks_db.get_by_ids(chunk_ids)
@@ -4300,18 +4299,12 @@ async def _filter_chunks_by_doc_ids(
                 allowed_ids.add(cid)
     except Exception as e:
         logger.warning(f"Failed to resolve chunk doc IDs for filtering: {e}")
-        return chunks
+        raise
 
-    filtered = [
-        c
-        for c in chunks
-        if (c.get("chunk_id") or c.get("id")) in allowed_ids
-    ]
+    filtered = [c for c in chunks if (c.get("chunk_id") or c.get("id")) in allowed_ids]
 
     if len(filtered) != len(chunks):
-        logger.info(
-            f"Folder filter: chunks {len(chunks)} -> {len(filtered)}"
-        )
+        logger.info(f"Folder filter: chunks {len(chunks)} -> {len(filtered)}")
 
     return filtered
 
@@ -5069,6 +5062,11 @@ async def _build_query_context(
         chunk_tracking=search_result["chunk_tracking"],
         query_embedding=search_result["query_embedding"],
     )
+
+    if query_param.filter_doc_ids is not None:
+        merged_chunks = await _filter_chunks_by_doc_ids(
+            merged_chunks, query_param.filter_doc_ids, text_chunks_db
+        )
 
     if (
         not merged_chunks
@@ -5915,6 +5913,9 @@ async def naive_query(
         query_param.max_total_tokens,
         query_param.user_prompt or "",
         query_param.enable_rerank,
+        sorted(query_param.filter_doc_ids)
+        if query_param.filter_doc_ids is not None
+        else None,
         "\n<llm_identity>\n",
         serialize_llm_cache_identity(llm_cache_identity),
     )

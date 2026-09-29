@@ -92,11 +92,38 @@ async def test_text_pdf_does_not_require_vlm_or_poppler(rag, monkeypatch):
     rag.role_llm_funcs["vlm"].assert_not_awaited()
 
 
-async def test_force_ocr_for_pdf_with_text_layer(rag, monkeypatch):
-    monkeypatch.setenv("LIGHTRAG_PDF_OCR_MODE", "always")
-    monkeypatch.setattr(ocr, "_pdf_pages", lambda *a: (["Bad text layer"], b"pdf"))
+@pytest.mark.parametrize("mode", ["auto", "always", "never"])
+async def test_text_pdf_always_reads_text_directly(rag, monkeypatch, mode):
+    monkeypatch.setenv("LIGHTRAG_PDF_OCR_MODE", mode)
+    monkeypatch.setattr(ocr, "_pdf_pages", lambda *a: (["Digital text"], b"pdf"))
+    def unexpected_render(*args):
+        pytest.fail("Text PDFs must not be rendered")
+    monkeypatch.setattr(ocr, "_render_page", unexpected_render)
+    assert await ocr.extract_visual_document(rag, b"pdf", ".pdf") == "[Page 1]\nDigital text"
+    rag.role_llm_funcs["vlm"].assert_not_awaited()
+
+
+@pytest.mark.parametrize("engine", ["auto", "tesseract", "vlm"])
+@pytest.mark.parametrize("mode", ["auto", "always", "never"])
+async def test_scanned_pdf_always_uses_vlm(rag, monkeypatch, engine, mode):
+    monkeypatch.setenv("LIGHTRAG_OCR_ENGINE", engine)
+    monkeypatch.setenv("LIGHTRAG_PDF_OCR_MODE", mode)
     monkeypatch.setattr(ocr, "_render_page", lambda *a: image_bytes())
-    assert "中文 OCR" in await ocr.extract_visual_document(rag, b"pdf", ".pdf")
+    result = await ocr.extract_visual_document(rag, pdf_bytes(), ".pdf")
+    assert result == "[Page 1]\n中文 OCR 7391"
+    rag.role_llm_funcs["vlm"].assert_awaited_once()
+
+
+@pytest.mark.parametrize("enabled,roles", [(False, True), (True, False)])
+async def test_scanned_pdf_requires_vlm_without_local_fallback(rag, monkeypatch, enabled, roles):
+    rag.vlm_process_enable = enabled
+    if not roles:
+        rag.role_llm_funcs = {}
+    def unexpected_local_ocr(*args):
+        pytest.fail("Scanned PDFs must not fall back to local OCR")
+    monkeypatch.setattr(ocr, "extract_legacy_or_image", unexpected_local_ocr)
+    with pytest.raises(ValueError, match="page 1.*VLM_PROCESS_ENABLE"):
+        await ocr.extract_visual_document(rag, pdf_bytes(), ".pdf")
 
 
 async def test_pdf_page_failure_is_not_silently_dropped(rag, monkeypatch):

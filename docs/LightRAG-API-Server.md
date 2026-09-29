@@ -550,6 +550,24 @@ Open WebUI uses an LLM to do the session title and session keyword generation ta
 
 ![image-20250323194750379](./LightRAG-API-Server.assets/image-20250323194750379.png)
 
+### Restrict queries to a folder
+
+`POST /query`, `POST /query/stream`, and `POST /query/data` accept:
+
+- `folder_id`: folder ID. Omitted, JSON `null`, empty, or whitespace-only values mean all folders.
+- `include_subfolders`: include descendant folders, default `true`. Ignored when no folder is selected.
+
+Both fields work in the JSON body or URL query string. A URL field overrides the same JSON field:
+
+```http
+POST /query/data?folder_id=your-folder-id&include_subfolders=false
+Content-Type: application/json
+
+{"query": "Summarize these documents", "mode": "mix"}
+```
+
+An empty folder returns no retrieval results. WebUI query settings provide a folder path dropdown, an “All folders” option, and an “Include subfolders” checkbox. Switching projects clears the folder selection.
+
 ### Choose Query mode in chat
 
 The default query mode is `hybrid` if you send a message (query) from the Ollama interface of LightRAG. You can select query mode by sending a message with a query prefix.

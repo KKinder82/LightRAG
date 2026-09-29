@@ -132,6 +132,8 @@ const useSettingsStoreBase = create<SettingsState>()(
       userPromptHistory: [],
 
       querySettings: {
+        folder_id: null,
+        include_subfolders: true,
         mode: 'global',
         top_k: 40,
         chunk_top_k: 20,

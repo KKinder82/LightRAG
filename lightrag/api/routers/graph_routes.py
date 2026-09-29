@@ -173,14 +173,10 @@ async def _build_folder_knowledge_graph(
         if node["id"] not in valid_node_ids:
             continue
         node_data = {k: v for k, v in node.items() if k != "id"}
-        labels = []
-        if "entity_type" in node_data:
-            et = node_data["entity_type"]
-            labels = et if isinstance(et, list) else [et]
         result.nodes.append(
             KnowledgeGraphNode(
                 id=node["id"],
-                labels=[node["id"]] if not labels else labels,
+                labels=[node["id"]],
                 properties=node_data,
             )
         )

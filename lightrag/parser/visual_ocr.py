@@ -111,12 +111,17 @@ def _ocr_engine(rag: Any) -> str:
         raise ValueError("LIGHTRAG_OCR_ENGINE must be auto, vlm or tesseract")
     if engine == "auto":
         engine = "vlm" if getattr(rag, "vlm_process_enable", False) else "tesseract"
-    if engine == "vlm" and (
+    if engine == "vlm":
+        _require_vlm(rag)
+    return engine
+
+
+def _require_vlm(rag: Any) -> None:
+    if (
         not getattr(rag, "vlm_process_enable", False)
         or not getattr(rag, "role_llm_funcs", {}).get("vlm")
     ):
         raise ValueError("VLM OCR requires VLM_PROCESS_ENABLE=true and a VLM role")
-    return engine
 
 
 async def _recognize(rag: Any, image: bytes, engine: str) -> str:
@@ -151,19 +156,21 @@ async def extract_visual_document(
         parts: list[str] = []
         if suffix.lower() == ".pdf":
             pages, pdf = await asyncio.to_thread(_pdf_pages, data, password)
-            mode = os.getenv("LIGHTRAG_PDF_OCR_MODE", "auto").strip().lower()
-            if mode not in {"auto", "always", "never"}:
-                raise ValueError("LIGHTRAG_PDF_OCR_MODE must be auto, always or never")
+            if pages and all(pages):
+                return "\n\n".join(
+                    f"[Page {number}]\n{text}"
+                    for number, text in enumerate(pages, 1)
+                )
             with tempfile.TemporaryDirectory(prefix="lightrag-pdf-ocr-") as directory:
                 root = Path(directory)
                 source = root / "source.pdf"
                 await asyncio.to_thread(source.write_bytes, pdf)
                 for number, text in enumerate(pages, 1):
-                    if mode == "always" or (mode == "auto" and not text):
+                    if not text:
                         try:
-                            engine = _ocr_engine(rag)
+                            _require_vlm(rag)
                             image = await asyncio.to_thread(_render_page, source, number, root)
-                            text = await _recognize(rag, image, engine)
+                            text = await _recognize(rag, image, "vlm")
                         except Exception as exc:
                             raise ValueError(f"PDF OCR failed on page {number}: {exc}") from exc
                     parts.append(f"[Page {number}]\n{text}")

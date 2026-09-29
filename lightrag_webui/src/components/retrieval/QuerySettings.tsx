@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from 'react'
-import { QueryMode, QueryRequest } from '@/api/lightrag'
+import { useCallback, useMemo, useEffect, useState } from 'react'
+import { getFolderTree, FolderTreeNode, QueryMode, QueryRequest } from '@/api/lightrag'
 // Removed unused import for Text component
 import Checkbox from '@/components/ui/Checkbox'
 import Input from '@/components/ui/Input'
@@ -41,6 +41,28 @@ const ResetButton = ({ onClick, title }: { onClick: () => void; title: string })
 export default function QuerySettings() {
   const { t } = useTranslation()
   const querySettings = useSettingsStore((state) => state.querySettings)
+  const [folders, setFolders] = useState<Array<{ id: string; path: string }>>([])
+  const [folderError, setFolderError] = useState(false)
+  const [loadingFolders, setLoadingFolders] = useState(true)
+
+  const loadFolders = useCallback(() => {
+    return getFolderTree().then(tree => {
+      const flatten = (nodes: FolderTreeNode[], parent = ''): Array<{ id: string; path: string }> =>
+        nodes.flatMap(({ folder, children }) => {
+          const path = parent ? `${parent} / ${folder.name}` : folder.name
+          return [{ id: folder.id, path }, ...flatten(children, path)]
+        })
+      setFolders(flatten(tree))
+      setFolderError(false)
+    }).catch(() => {
+      setFolderError(true)
+    }).finally(() => {
+      setLoadingFolders(false)
+    })
+  }, [])
+
+  useEffect(() => { void loadFolders() }, [loadFolders])
+
   const userPromptHistory = useSettingsStore((state) => state.userPromptHistory)
 
   const handleChange = useCallback((key: keyof QueryRequest, value: any) => {
@@ -80,7 +102,42 @@ export default function QuerySettings() {
       <CardContent className="m-0 flex grow flex-col p-0 text-xs">
         <div className="relative size-full">
           <div className="absolute inset-0 flex flex-col gap-2 overflow-auto px-2 pr-2">
-            {/* User Prompt - Moved to top for better dropdown space */}
+            <label htmlFor="query_folder" className="ml-1">
+              {t('retrievePanel.querySettings.folder')}
+            </label>
+            <select
+              id="query_folder"
+              className="h-9 w-full min-w-0 rounded border bg-background px-2 text-sm"
+              value={querySettings.folder_id || ''}
+              onFocus={() => { void loadFolders() }}
+              onChange={(event) => handleChange('folder_id', event.target.value || null)}
+              aria-busy={loadingFolders}
+            >
+              <option value="">{t('retrievePanel.querySettings.allFolders')}</option>
+              {querySettings.folder_id && !folders.some(folder => folder.id === querySettings.folder_id) && (
+                <option value={querySettings.folder_id}>{querySettings.folder_id}</option>
+              )}
+              {folders.map(folder => <option key={folder.id} value={folder.id}>{folder.path}</option>)}
+            </select>
+            {folderError && <span role="alert" className="text-destructive">
+              {t('retrievePanel.querySettings.folderLoadError')}
+              <button type="button" className="ml-1 underline" onClick={() => { void loadFolders() }}>
+                {t('retrievePanel.querySettings.retryFolders')}
+              </button>
+            </span>}
+            <div className="flex items-center gap-2">
+              <label htmlFor="query_include_subfolders" className="ml-1 flex-1">
+                {t('retrievePanel.querySettings.includeSubfolders')}
+              </label>
+              <Checkbox
+                id="query_include_subfolders"
+                checked={querySettings.include_subfolders ?? true}
+                disabled={!querySettings.folder_id}
+                onCheckedChange={(checked) => handleChange('include_subfolders', checked === true)}
+              />
+            </div>
+            <p className="ml-1 text-muted-foreground">{t('retrievePanel.querySettings.folderHint')}</p>
+            {/* User Prompt */}
             <>
               <TooltipProvider>
                 <Tooltip>
