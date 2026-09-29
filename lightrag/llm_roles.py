@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Callable, Mapping
 
@@ -181,17 +183,66 @@ class _RoleLLMMixin:
         model_kwargs: dict[str, Any],
     ) -> Callable[..., object]:
         spec = ROLES_BY_NAME[role_name]
+        bound_func = partial(
+            raw_func,
+            hashing_kv=self.llm_response_cache,
+            **model_kwargs,
+        )
+
+        async def logged_call(*args: Any, **kwargs: Any) -> Any:
+            started = time.monotonic()
+            success = False
+            error_type: str | None = None
+            try:
+                result = await bound_func(*args, **kwargs)
+                success = True
+                return result
+            except BaseException as exc:
+                error_type = type(exc).__name__
+                raise
+            finally:
+                elapsed = time.monotonic() - started
+                model = (
+                    self._role_llm_states[role_name].metadata.get("model")
+                    or "default"
+                )
+                message = {
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "role": role_name,
+                    "model": str(model),
+                    "status": "ok" if success else "error",
+                    "duration_seconds": round(elapsed, 3),
+                    "error_type": error_type,
+                }
+                logger.info(
+                    "LLM call role=%s model=%s status=%s duration=%.3fs",
+                    role_name, model, message["status"], elapsed,
+                )
+                try:
+                    from lightrag.kg.shared_storage import (
+                        get_namespace_data,
+                        get_namespace_lock,
+                    )
+
+                    pipeline_status = await get_namespace_data(
+                        "pipeline_status", workspace=self.workspace
+                    )
+                    async with get_namespace_lock(
+                        "pipeline_status", workspace=self.workspace
+                    ):
+                        calls = pipeline_status.get("llm_call_messages")
+                        if calls is not None:
+                            calls.append(message)
+                            if len(calls) > 2000:
+                                del calls[:-1000]
+                except Exception:
+                    logger.debug("LLM call console unavailable", exc_info=True)
+
         return priority_limit_async_func_call(
             max_async,
             llm_timeout=timeout,
             queue_name=spec.queue_name,
-        )(
-            partial(
-                raw_func,
-                hashing_kv=self.llm_response_cache,
-                **model_kwargs,
-            )
-        )
+        )(logged_call)
 
     def _rebuild_role_llm_funcs(self) -> None:
         """Wrap each role's raw_func with its own priority queue.

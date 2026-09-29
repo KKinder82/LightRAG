@@ -351,7 +351,9 @@ async def test_real_legacy_office_upload_and_repeat(upload_app, tmp_path, extens
         assert "6418" in (await rag.full_docs.get_by_id(doc_id))["content"]
         assert folder.id in doc.metadata["folder_ids"]
         ids.append(doc_id)
-    assert len(set(ids)) == 2
+    assert len(set(ids)) == 1
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
+    assert len(docs) == 1
 
 
 async def test_new_upload_does_not_retry_previous_analysis_failure(upload_app, monkeypatch):

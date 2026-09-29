@@ -154,6 +154,7 @@
       "status": {
         "all": "全部",
         "completed": "已完成",
+        "kgFailed": "（KG 失败）",
         "preprocessed": "预处理",
         "parsing": "内容提取",
         "analyzing": "分析中",
@@ -252,6 +253,7 @@
       "progress": "进度",
       "unit": "批",
       "pipelineMessages": "流水线消息",
+      "llmCalls": "LLM 调用",
       "cancelButton": "中断",
       "cancelTooltip": "中断流水线处理",
       "cancelConfirmTitle": "确认中断流水线",

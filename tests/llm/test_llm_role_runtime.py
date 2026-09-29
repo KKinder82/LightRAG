@@ -9,6 +9,7 @@ import pytest
 
 from lightrag import LightRAG, ROLES, RoleLLMConfig
 from lightrag.llm.binding_options import OpenAILLMOptions
+from lightrag.kg.shared_storage import get_namespace_data
 from lightrag.utils import EmbeddingFunc, Tokenizer, priority_limit_async_func_call
 
 
@@ -35,6 +36,25 @@ async def _mock_embedding(texts: list[str]) -> np.ndarray:
 
 async def _base_llm(*args, **kwargs) -> str:
     return "base"
+
+
+@pytest.mark.asyncio
+async def test_role_calls_are_recorded_without_prompts_or_secrets(tmp_path):
+    rag = _make_rag(tmp_path)
+    rag.set_role_llm_metadata("query", model="test-model", api_key="private-token")
+    await rag.initialize_storages()
+    try:
+        assert await rag.role_llm_funcs["query"]("sensitive prompt") == "base"
+        status = await get_namespace_data("pipeline_status", workspace=rag.workspace)
+        call = status["llm_call_messages"][-1]
+        assert call["role"] == "query"
+        assert call["model"] == "test-model"
+        assert call["status"] == "ok"
+        assert call["duration_seconds"] >= 0
+        assert "sensitive prompt" not in str(call)
+        assert "private-token" not in str(call)
+    finally:
+        await rag.finalize_storages()
 
 
 _ROLE_FIELD_SUFFIXES = (

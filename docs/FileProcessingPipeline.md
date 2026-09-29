@@ -6,6 +6,8 @@ Starting from version v1.5.0 (currently on the dev branch), LightRAG's file proc
 * Supports multiple text chunking methods: Fix, Recursive, Vector, Paragraph
 * Supports disabling entity-relation extraction for individual files
 
+Once text chunks and their vectors are durable, a document becomes `PROCESSED` and the UI shows “Completed”. Knowledge graph generation continues automatically; after it succeeds, the UI shows “Completed (KG)”. A KG failure leaves text search available and records `metadata.kg_status=failed` and `metadata.kg_error`; graph-based retrieval may remain incomplete. The Pipeline window shows message timestamps and intervals, plus a console of LLM calls by role with result and duration.
+
 LightRAG Server introduces an intermediate file-processing format: `LightRAG Document`. This format supports multimodal data such as tables and images, and also includes the document's section/paragraph metadata, which is convenient for content traceability later.
 
 This document is organized from the perspective of **LightRAG Server** deployment and use: the quick-start configuration that can be applied directly is given first, followed by configuration syntax for content extraction and chunking, storage / directory layout, deduplication, concurrency, and resume rules. Developers who call the `LightRAG` class directly via Python should jump to [Chapter 8: Python SDK Invocation](#8-python-sdk-invocation).
@@ -129,7 +131,7 @@ When parsing the hint, content without a hyphen must match an engine name exactl
 
 `mineru` and `docling` are external content extraction engines; before enabling related rules, the services must be running first, and the corresponding endpoint/token must be configured in LightRAG.
 
-LightRAG caches the parsing results of the `mineru` and `docling` engines locally. Re-uploading the same file usually does not trigger the engine to re-parse the document. To delete the parse cache, you must click the "also delete file" option in the delete-file dialog of the document management interface. Modifying the endpoint addresses and effective extraction parameters of the `mineru` / `docling` engines will also invalidate the cache, causing the engine to re-parse the file content on the next upload of the same file.
+LightRAG caches parsing results from the `mineru` and `docling` engines locally. Re-uploading the same filename into the same folder replaces the document and removes its old parsing artifacts, so the replacement is parsed again. Reprocessing an existing document may still reuse a valid cache. Changing the engine endpoint or effective extraction parameters invalidates that cache.
 
 #### MinerU Configuration and Local Deployment
 
@@ -574,13 +576,13 @@ Concurrency safety: identical to the MinerU path — LightRAG mandates `canonica
 
 ## 5. Document Duplicate Detection Rules
 
-File upload, file-parse enqueue, and the text APIs check duplicates against two gates: "filename + content hash". Hitting either is considered a duplicate, and a `FAILED` record is written without overwriting the existing `full_docs`. `/documents/scan` directory scanning uses the same set of indexes, but in order to facilitate automatic retry of unfinished files, it has separate archive and re-process rules for duplicate filenames.
+`/documents/upload` uses the project, exact target folder, and original filename as its unique target. A second upload stages and validates the new file, removes the old document's text, vectors, graph contribution, and source file, then enqueues the replacement. The same filename may exist in different folders. If the old document is shared with another folder, only the target folder's association is removed. Text APIs, core enqueue APIs, and `/documents/scan` retain the duplicate rules below.
 
 ### 5.1 Filename (basename) Deduplication
 
 - The granularity of the check is basename, excluding directory path and workspace path. For example, `/data/a.pdf`, `inputs/a.pdf`, and `a.pdf` are all considered the same filename `a.pdf`.
 - Filename deduplication uses `canonical_basename` as the index: the supported-engine processing hint at the end of the filename is stripped before comparison, so `abc.docx`, `abc.[native].docx`, and `abc.[native-iet].docx` are considered the same name. Unsupported hints are not stripped; e.g., `abc.[draft].docx` is still treated by its original filename.
-- For ordinary upload, text APIs, and core enqueue APIs, as long as a file with the same name already exists in `doc_status` — whether that record is currently `PENDING`, `PARSING`, `ANALYZING`, `PROCESSING`, `FAILED`, or `PROCESSED` — the same-name file is considered a duplicate.
+- For text APIs and core enqueue APIs, as long as a file with the same name already exists in `doc_status` — whether that record is currently `PENDING`, `PARSING`, `ANALYZING`, `PROCESSING`, `FAILED`, or `PROCESSED` — the same-name file is considered a duplicate. `/documents/upload` replaces within its exact folder as described above.
 - For `/documents/scan` directory scan:
   - If multiple files in the same scan share the same canonicalized name, the file with a supported engine hint is processed first; if no variant has a hint, the first file after sorting is processed, and the rest are archived to `__parsed__` and skipped.
   - If the same-name record is already `PROCESSED`, the file just scanned is treated as already processed; the system emits a warning, moves the input file to the sibling `__parsed__` directory, and skips enqueueing.

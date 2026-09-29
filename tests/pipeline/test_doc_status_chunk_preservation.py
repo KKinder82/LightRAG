@@ -332,7 +332,9 @@ async def test_extract_failure_preserves_chunks_and_allows_delete_with_cache_cle
 
         doc_status = await rag.doc_status.get_by_id(doc_id)
         assert doc_status is not None
-        assert _status_to_text(doc_status["status"]) == "failed"
+        assert _status_to_text(doc_status["status"]) == "processed"
+        assert doc_status["metadata"]["kg_status"] == "failed"
+        assert "extract fail sentinel" in doc_status["metadata"]["kg_error"]
         chunk_ids = doc_status.get("chunks_list", [])
         assert len(chunk_ids) == 2
         assert doc_status.get("chunks_count") == 2
@@ -437,7 +439,9 @@ async def test_merge_failure_preserves_chunks_and_skip_cache_cleanup_when_disabl
 
         doc_status = await rag.doc_status.get_by_id(doc_id)
         assert doc_status is not None
-        assert _status_to_text(doc_status["status"]) == "failed"
+        assert _status_to_text(doc_status["status"]) == "processed"
+        assert doc_status["metadata"]["kg_status"] == "failed"
+        assert "merge fail sentinel" in doc_status["metadata"]["kg_error"]
         chunk_ids = doc_status.get("chunks_list", [])
         assert len(chunk_ids) == 2
         assert doc_status.get("chunks_count") == 2
@@ -1211,6 +1215,18 @@ async def test_pipeline_cancellation_preserves_file_path_for_queued_docs(
         pipeline_task = asyncio.create_task(rag.apipeline_process_enqueue_documents())
         await asyncio.wait_for(extraction_started.wait(), timeout=5)
 
+        # Text vectors are usable while KG extraction is still blocked.
+        in_progress = [
+            await rag.doc_status.get_by_id(compute_mdhash_id(path, prefix="doc-"))
+            for path in file_paths
+        ]
+        assert any(
+            doc is not None
+            and _status_to_text(doc["status"]) == "processed"
+            and doc["metadata"]["kg_status"] == "running"
+            for doc in in_progress
+        )
+
         pipeline_status = await get_namespace_data(
             "pipeline_status", workspace=rag.workspace
         )
@@ -1223,12 +1239,18 @@ async def test_pipeline_cancellation_preserves_file_path_for_queued_docs(
         release_first_doc.set()
         await asyncio.wait_for(pipeline_task, timeout=5)
 
-        second_doc_id = compute_mdhash_id(file_paths[1], prefix="doc-")
-        second_status = await rag.doc_status.get_by_id(second_doc_id)
-        assert second_status is not None
-        assert _status_to_text(second_status["status"]) == "failed"
-        assert second_status["file_path"] == "second.md"
-        assert second_status["error_msg"] == "User cancelled"
+        statuses = [
+            await rag.doc_status.get_by_id(compute_mdhash_id(path, prefix="doc-"))
+            for path in file_paths
+        ]
+        assert all(status is not None for status in statuses)
+        assert [status["file_path"] for status in statuses] == file_paths
+        assert sorted(_status_to_text(status["status"]) for status in statuses) == [
+            "failed", "processed",
+        ]
+        completed = next(status for status in statuses if _status_to_text(status["status"]) == "processed")
+        assert completed["metadata"]["kg_status"] == "failed"
+        assert completed["metadata"]["kg_error"] == "User cancelled"
     finally:
         await rag.finalize_storages()
 
@@ -1287,9 +1309,13 @@ async def test_pipeline_cancellation_repairs_placeholder_file_path_for_queued_do
 
         repaired_status = await rag.doc_status.get_by_id(second_doc_id)
         assert repaired_status is not None
-        assert _status_to_text(repaired_status["status"]) == "failed"
         assert repaired_status["file_path"] == "second.md"
-        assert repaired_status["error_msg"] == "User cancelled"
+        if _status_to_text(repaired_status["status"]) == "processed":
+            assert repaired_status["metadata"]["kg_status"] == "failed"
+            assert repaired_status["metadata"]["kg_error"] == "User cancelled"
+        else:
+            assert _status_to_text(repaired_status["status"]) == "failed"
+            assert repaired_status["error_msg"] == "User cancelled"
     finally:
         await rag.finalize_storages()
 

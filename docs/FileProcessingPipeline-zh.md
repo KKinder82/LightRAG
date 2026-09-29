@@ -8,6 +8,8 @@
 
 LightRAG Server引入了一个文件处理的中间格式： `LightRAG Document` 。该格式支持表格和图片等多模态数据，同时包含文章的章节段落元数据，方便日后进行内容溯源。
 
+文档切块文本和向量落库后即标记为 `PROCESSED`，界面显示“已完成”；此时文本检索可用，知识图谱仍在后台构建。图谱完成后显示“已完成 (KG)”。图谱失败时文档仍保持文本完成状态，`metadata.kg_status=failed` 和 `metadata.kg_error` 记录图谱错误；依赖图谱的检索结果可能尚不完整。流水线窗口显示每条消息的时间及距离上一条消息的间隔，并提供按角色查看 LLM 调用结果与耗时的控制台。
+
 本文以 **LightRAG Server** 的部署与使用视角组织：先给出快速开始可直接套用的配置，再展开内容抽取与分块的配置语法、存储 / 目录布局、去重、并发以及续跑规则。直接通过 Python 代码调用 `LightRAG` 类的开发者请翻到[第八章 Python SDK 调用](#八、Python SDK 调用)。
 
 ## 一、快速开始
@@ -129,7 +131,7 @@ notes.[-R].md
 
 `mineru` 和 `docling` 是外部内容提取引擎，启用相关规则前必须先把服务跑起来，再在 LightRAG 配置对应 endpoint/token。
 
-LightRAG 在本地会缓存 `mineru` 和 `docling` 引擎的解析结果。重复上传相同的文件通常不会重新调用引擎解析文档。如果需要删除解析缓存，必须在文档管理界面删除文件弹窗中点击“同时删除文件”选项。修改 `mineru` 和 `docling` 引擎的端点地址和有效提取参数也会导致缓存失效，下次上传相同文件的时候会重新调用引擎解析文件内容。
+LightRAG 在本地会缓存 `mineru` 和 `docling` 引擎的解析结果。同一目录同名文件的再次上传属于替换，旧文件及解析产物会先清理，因此新文件会重新解析。对已有文档执行普通重新解析时，仍可复用有效缓存；修改引擎端点或有效提取参数会使缓存失效。
 
 #### MinerU 配置方法与本地部署
 
@@ -574,13 +576,13 @@ __parsed__/<base>.docling_raw/
 
 ## 五、文档重复判定规则
 
-文件上传、文件解析入队和文本接口会按照「文件名 + 内容 hash」两道关卡判断是否重复，命中任一即视为重复并写入一条 `FAILED` 记录，不会覆盖已有的 `full_docs`。`/documents/scan` 目录扫描也使用同一套索引，但为了便于自动重试未完成文件，对文件名重复有单独的归档与重处理规则。
+`/documents/upload` 以当前项目、目标目录和原始文件名确定唯一上传目标。同一目标再次上传时，先暂存并验证新文件，再删除旧文档的文本块、向量、图谱贡献和源文件，随后入队新文件；不同目录可各自保留同名文件。如果旧文档还关联其他目录，仅解除当前目录的关联，其他目录仍可使用旧内容。文本接口、核心入队 API 和 `/documents/scan` 保持下述重复判定规则。
 
 ### 5.1 文件名（basename）查重
 
 - 判断粒度为 basename，不包含目录路径和 workspace 路径。例如 `/data/a.pdf`、`inputs/a.pdf` 和 `a.pdf` 都视为同一个文件名 `a.pdf`。
 - 文件名查重以 `canonical_basename` 为索引：将文件名末尾的支持引擎处理提示 hint 剥离后再比对，因此 `abc.docx`、`abc.[native].docx`、`abc.[native-iet].docx` 之间互相视为同名；不支持的 hint 不会被剥离，例如 `abc.[draft].docx` 仍按原文件名处理。
-- 对普通上传、文本接口和核心入队 API，只要 `doc_status` 中已经存在同名文件记录，无论该记录当前处于 `PENDING`、`PARSING`、`ANALYZING`、`PROCESSING`、`FAILED` 还是 `PROCESSED`，同名文件都会被视为重复。
+- 对文本接口和核心入队 API，只要 `doc_status` 中已经存在同名文件记录，无论该记录当前处于 `PENDING`、`PARSING`、`ANALYZING`、`PROCESSING`、`FAILED` 还是 `PROCESSED`，同名文件都会被视为重复。`/documents/upload` 按上一段的目录范围替换。
 - 对 `/documents/scan` 目录扫描：
   - 同一次扫描中如果有多个文件规范化后同名，优先处理带支持引擎 hint 的文件；若无任何 hint 变体，则处理排序后的第一个文件，其余文件会归档到 `__parsed__` 并跳过。
   - 如果同名记录已经是 `PROCESSED`，当前扫描到的文件视为已处理文件，系统会输出 warning，将该输入文件移动到同级 `__parsed__` 目录，并跳过入队。

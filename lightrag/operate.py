@@ -9,6 +9,7 @@ import json_repair
 from typing import Any, AsyncIterator, overload, Literal
 from collections import Counter, defaultdict
 
+from lightrag.pipeline_messages import append_pipeline_message
 from lightrag.exceptions import (
     PipelineCancelledException,
 )
@@ -856,7 +857,7 @@ async def rebuild_knowledge_from_chunks(
     if pipeline_status is not None and pipeline_status_lock is not None:
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+            append_pipeline_message(pipeline_status, status_message)
 
     # Get cached extraction results for these chunks using storage
     # cached_results： chunk_id -> [list of (extraction_result, create_time) from LLM cache sorted by create_time of the first extraction_result]
@@ -872,7 +873,7 @@ async def rebuild_knowledge_from_chunks(
         if pipeline_status is not None and pipeline_status_lock is not None:
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = status_message
-                pipeline_status["history_messages"].append(status_message)
+                append_pipeline_message(pipeline_status, status_message)
         return
 
     # Process cached results to get entities and relationships for each chunk
@@ -949,7 +950,7 @@ async def rebuild_knowledge_from_chunks(
             if pipeline_status is not None and pipeline_status_lock is not None:
                 async with pipeline_status_lock:
                     pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+                    append_pipeline_message(pipeline_status, status_message)
             continue
 
     # Get max async tasks limit from global_config for semaphore control
@@ -989,7 +990,7 @@ async def rebuild_knowledge_from_chunks(
                     if pipeline_status is not None and pipeline_status_lock is not None:
                         async with pipeline_status_lock:
                             pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                            append_pipeline_message(pipeline_status, status_message)
 
     async def _locked_rebuild_relationship(src, tgt, chunk_ids):
         nonlocal rebuilt_relationships_count, failed_relationships_count
@@ -1027,7 +1028,7 @@ async def rebuild_knowledge_from_chunks(
                     if pipeline_status is not None and pipeline_status_lock is not None:
                         async with pipeline_status_lock:
                             pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                            append_pipeline_message(pipeline_status, status_message)
 
     # Create tasks for parallel processing
     tasks = []
@@ -1048,7 +1049,7 @@ async def rebuild_knowledge_from_chunks(
     if pipeline_status is not None and pipeline_status_lock is not None:
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+            append_pipeline_message(pipeline_status, status_message)
 
     # Execute all tasks in parallel with semaphore control and early failure detection
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
@@ -1091,7 +1092,7 @@ async def rebuild_knowledge_from_chunks(
     if pipeline_status is not None and pipeline_status_lock is not None:
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+            append_pipeline_message(pipeline_status, status_message)
 
 
 async def _get_cached_extraction_results(
@@ -1613,7 +1614,7 @@ async def _rebuild_single_entity(
     if pipeline_status is not None and pipeline_status_lock is not None:
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+            append_pipeline_message(pipeline_status, status_message)
 
 
 async def _rebuild_single_relationship(
@@ -1896,7 +1897,7 @@ async def _rebuild_single_relationship(
     if pipeline_status is not None and pipeline_status_lock is not None:
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+            append_pipeline_message(pipeline_status, status_message)
 
 
 async def _merge_nodes_then_upsert(
@@ -2177,7 +2178,7 @@ async def _merge_nodes_then_upsert(
             if pipeline_status is not None and pipeline_status_lock is not None:
                 async with pipeline_status_lock:
                     pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+                    append_pipeline_message(pipeline_status, status_message)
         else:
             logger.debug(status_message)
 
@@ -2530,7 +2531,7 @@ async def _merge_edges_then_upsert(
             if pipeline_status is not None and pipeline_status_lock is not None:
                 async with pipeline_status_lock:
                     pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+                    append_pipeline_message(pipeline_status, status_message)
         else:
             logger.debug(status_message)
 
@@ -2721,7 +2722,7 @@ async def _merge_edges_then_upsert(
                     if pipeline_status is not None and pipeline_status_lock is not None:
                         async with pipeline_status_lock:
                             pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                            append_pipeline_message(pipeline_status, status_message)
 
         edge_created_at = int(time.time())
         edge_upsert_started = time.perf_counter()
@@ -2885,7 +2886,7 @@ async def merge_nodes_and_edges(
     logger.info(log_message)
     async with pipeline_status_lock:
         pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+        append_pipeline_message(pipeline_status, log_message)
 
 
     # Get max async tasks limit from global_config for semaphore control
@@ -2897,7 +2898,7 @@ async def merge_nodes_and_edges(
     logger.info(log_message)
     async with pipeline_status_lock:
         pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+        append_pipeline_message(pipeline_status, log_message)
 
     async def _locked_process_entity_name(entity_name, entities):
         async with semaphore:
@@ -2942,7 +2943,7 @@ async def merge_nodes_and_edges(
                         ):
                             async with pipeline_status_lock:
                                 pipeline_status["latest_message"] = error_msg
-                                pipeline_status["history_messages"].append(error_msg)
+                                append_pipeline_message(pipeline_status, error_msg)
                     except Exception as status_error:
                         logger.error(
                             f"Failed to update pipeline status: {status_error}"
@@ -3002,7 +3003,7 @@ async def merge_nodes_and_edges(
     logger.info(log_message)
     async with pipeline_status_lock:
         pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+        append_pipeline_message(pipeline_status, log_message)
 
     async def _locked_process_edges(edge_key, edges):
         async with semaphore:
@@ -3060,7 +3061,7 @@ async def merge_nodes_and_edges(
                         ):
                             async with pipeline_status_lock:
                                 pipeline_status["latest_message"] = error_msg
-                                pipeline_status["history_messages"].append(error_msg)
+                                append_pipeline_message(pipeline_status, error_msg)
                     except Exception as status_error:
                         logger.error(
                             f"Failed to update pipeline status: {status_error}"
@@ -3178,7 +3179,7 @@ async def merge_nodes_and_edges(
             logger.info(log_message)
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                append_pipeline_message(pipeline_status, log_message)
 
             # Update storage
             if final_entity_names:
@@ -3217,7 +3218,7 @@ async def merge_nodes_and_edges(
     logger.info(log_message)
     async with pipeline_status_lock:
         pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+        append_pipeline_message(pipeline_status, log_message)
 
 
 #IMPO:  实体提取
@@ -3572,7 +3573,7 @@ async def extract_entities(
         if pipeline_status is not None:
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                append_pipeline_message(pipeline_status, log_message)
 
         # Return the extracted nodes and edges for centralized processing
         return maybe_nodes, maybe_edges

@@ -962,9 +962,9 @@ async def test_upload_versions_same_name_failed_doc_status_without_full_docs(
     response = await upload_endpoint(bg, upload_file, None)
     assert response.status == "success"
     assert len(bg.tasks) == 1
-    revisions = list(tmp_path.glob("failed-*.docx"))
-    assert len(revisions) == 1
-    assert revisions[0].read_bytes() == b"replacement docx bytes"
+    staged = list((tmp_path / ".upload_staging").iterdir())
+    assert len(staged) == 1
+    assert staged[0].read_bytes() == b"replacement docx bytes"
     assert not (tmp_path / "failed.docx").exists()
 
 
@@ -991,9 +991,9 @@ async def test_upload_versions_parser_hinted_filesystem_duplicate(tmp_path, monk
     assert response.status == "success"
     assert len(bg.tasks) == 1
     assert (tmp_path / "existing.docx").read_bytes() == b"existing docx bytes"
-    revisions = list(tmp_path.glob("existing-*.docx"))
-    assert len(revisions) == 1
-    assert ".[native].docx" in revisions[0].name
+    staged = list((tmp_path / ".upload_staging").iterdir())
+    assert len(staged) == 1
+    assert staged[0].read_bytes() == b"replacement docx bytes"
 
 
 async def test_upload_succeeds_concurrent_with_pipeline_busy(tmp_path, monkeypatch):
@@ -1036,7 +1036,7 @@ async def test_upload_succeeds_concurrent_with_pipeline_busy(tmp_path, monkeypat
 
     # Endpoint accepted the upload despite busy=True.
     assert response.status == "success"
-    assert (tmp_path / "while_busy.docx").exists()
+    assert len(list((tmp_path / ".upload_staging").iterdir())) == 1
     # The slot has been transferred to the bg task; it will release on
     # completion.  Until then pending_enqueues stays at 1 so a
     # concurrent /scan would refuse.
@@ -1126,7 +1126,7 @@ async def test_upload_succeeds_during_scan_processing_phase(tmp_path, monkeypatc
 
     # Endpoint accepted the upload despite scan in progress.
     assert response.status == "success"
-    assert (tmp_path / "upload_during_scan_processing.docx").exists()
+    assert len(list((tmp_path / ".upload_staging").iterdir())) == 1
     assert pipeline_status["pending_enqueues"] == 1
     assert len(bg.tasks) == 1
 
@@ -1409,8 +1409,7 @@ async def test_two_concurrent_uploads_both_succeed_when_pipeline_busy(
     # Both reservations coexist while bg tasks are pending.
     assert pipeline_status["pending_enqueues"] == 2
     # Both files were written to disk; both bg tasks scheduled.
-    assert (tmp_path / "a.docx").exists()
-    assert (tmp_path / "b.docx").exists()
+    assert len(list((tmp_path / ".upload_staging").iterdir())) == 2
     assert len(bg_a.tasks) == 1
     assert len(bg_b.tasks) == 1
 

@@ -154,6 +154,7 @@
       "status": {
         "all": "All",
         "completed": "Completed",
+        "kgFailed": "(KG failed)",
         "preprocessed": "Preprocessed",
         "parsing": "Parsing",
         "analyzing": "Analyzing",
@@ -252,6 +253,7 @@
       "progress": "Progress",
       "unit": "Batch",
       "pipelineMessages": "Pipeline Messages",
+      "llmCalls": "LLM Calls",
       "cancelButton": "Cancel",
       "cancelTooltip": "Cancel pipeline processing",
       "cancelConfirmTitle": "Confirm Pipeline Cancellation",

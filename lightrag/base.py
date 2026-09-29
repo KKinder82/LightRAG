@@ -828,7 +828,10 @@ def _folder_ids_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
 #MARK: 文档状态(枚举)
 class DocStatus(str, Enum):
     """Document processing status.
-    Pipeline order: PENDING -> PARSING -> ANALYZING (optional) -> PROCESSING -> PROCESSED | FAILED.
+    Pipeline order: PENDING -> PARSING -> ANALYZING (optional) -> PROCESSING
+    -> PROCESSED once text vectors are durable. Knowledge graph work continues
+    with ``metadata.kg_status`` set to running, completed, skipped, or failed.
+    FAILED applies before text indexing completes.
     PREPROCESSED is deprecated, kept for backward compatibility.
     """
 

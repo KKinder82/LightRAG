@@ -30,6 +30,7 @@ from lightrag.parser.office_ocr import extract_legacy_or_image
 from lightrag.parser.visual_ocr import extract_visual_document
 from lightrag import LightRAG
 from lightrag.base import DeletionResult, DocProcessingStatus, DocStatus
+from lightrag.pipeline_messages import append_pipeline_message
 from lightrag.constants import (
     FULL_DOCS_FORMAT_PENDING_PARSE,
     PARSER_ENGINE_LEGACY,
@@ -1063,6 +1064,8 @@ class PipelineStatusResponse(BaseModel):
     request_pending: bool = False
     latest_message: str = ""
     history_messages: Optional[List[str]] = None
+    history_message_timings: Optional[List[dict[str, Any] | None]] = None
+    llm_call_messages: Optional[List[dict[str, Any]]] = None
     update_status: Optional[dict] = None
 
     @field_validator("job_start", mode="before")
@@ -1242,6 +1245,37 @@ async def get_existing_doc_by_file_path_candidates(
     if basename == UNKNOWN_FILE_SOURCE:
         return None
     return await doc_status.get_doc_by_file_basename(basename)
+
+
+async def get_uploads_in_target(
+    rag: LightRAG, upload_name: str, folder_id: str | None
+) -> list[tuple[str, DocProcessingStatus]]:
+    """Find all versions of a logical upload in one exact folder."""
+    wanted = normalize_file_path(upload_name)
+    matches: list[tuple[str, DocProcessingStatus]] = []
+    page = 1
+    while True:
+        rows, total = await rag.doc_status.get_docs_paginated(
+            page=page, page_size=200
+        )
+        for doc_id, doc in rows:
+            metadata = doc.metadata or {}
+            folders = _get_folder_ids_from_metadata(metadata)
+            if folder_id is None:
+                if folders:
+                    continue
+            elif folder_id not in folders:
+                continue
+            name = metadata.get("upload_name") or doc.file_path
+            canonical = normalize_file_path(name)
+            if "upload_name" not in metadata:
+                canonical = re.sub(r"-[0-9a-f]{12}(?=\.[^.]+$)", "", canonical)
+            if canonical == wanted:
+                matches.append((doc_id, doc))
+        if page * 200 >= total:
+            break
+        page += 1
+    return matches
 
 
 #GROUP: 保留一个待处理的上传/插入槽位（pending enqueue slot）
@@ -1662,7 +1696,7 @@ async def record_scan_warning(rag: LightRAG, message: str) -> None:
         )
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = message
-            pipeline_status["history_messages"].append(message)
+            append_pipeline_message(pipeline_status, message)
     except Exception:
         pass
 
@@ -1926,6 +1960,7 @@ async def pipeline_enqueue_file(
     from_scan: bool = False,
     allow_duplicate_content: bool = False,
     fast_index: bool = False,
+    upload_name: str | None = None,
 
 ) -> tuple[bool, str]:
     # MARK: 增加一个文件到处理队列
@@ -2043,6 +2078,8 @@ async def pipeline_enqueue_file(
                     enqueue_kwargs["allow_duplicate_content"] = True
                 if folder_id:
                     enqueue_kwargs["folder_id"] = folder_id
+                if upload_name:
+                    enqueue_kwargs["upload_name"] = upload_name
                 # TODO: 一会儿处理。
                 enqueue_result = await rag.apipeline_enqueue_documents(
                     "", **enqueue_kwargs
@@ -2374,6 +2411,8 @@ async def pipeline_enqueue_file(
                     enqueue_kwargs["allow_duplicate_content"] = True
                 if folder_id:
                     enqueue_kwargs["folder_id"] = folder_id
+                if upload_name:
+                    enqueue_kwargs["upload_name"] = upload_name
                 #MARK: 内容处理完成，进入排队流程。
                 #IMPO:
                 enqueue_result = await rag.apipeline_enqueue_documents(
@@ -3022,7 +3061,7 @@ async def background_delete_documents(
         # Use slice assignment to clear the list in place
         pipeline_status["history_messages"][:] = ["Starting document deletion process"]
         if delete_llm_cache:
-            pipeline_status["history_messages"].append(
+            append_pipeline_message(pipeline_status,
                 "LLM cache cleanup requested for this deletion job"
             )
 
@@ -3035,7 +3074,7 @@ async def background_delete_documents(
                     cancel_msg = f"Deletion cancelled by user at document {i}/{total_docs}. {len(successful_deletions)} deleted, {total_docs - i + 1} remaining."
                     logger.info(cancel_msg)
                     pipeline_status["latest_message"] = cancel_msg
-                    pipeline_status["history_messages"].append(cancel_msg)
+                    append_pipeline_message(pipeline_status, cancel_msg)
                     # Add remaining documents to failed list with cancellation reason
                     failed_deletions.extend(
                         doc_ids[i - 1 :]
@@ -3046,7 +3085,7 @@ async def background_delete_documents(
                 logger.info(start_msg)
                 pipeline_status["cur_batch"] = i
                 pipeline_status["latest_message"] = start_msg
-                pipeline_status["history_messages"].append(start_msg)
+                append_pipeline_message(pipeline_status, start_msg)
 
             file_path = "#"
             try:
@@ -3063,7 +3102,7 @@ async def background_delete_documents(
                     )
                     logger.info(success_msg)
                     async with pipeline_status_lock:
-                        pipeline_status["history_messages"].append(success_msg)
+                        append_pipeline_message(pipeline_status, success_msg)
 
                     # Handle file deletion if requested and source information is available
                     if (
@@ -3084,7 +3123,7 @@ async def background_delete_documents(
                                     pipeline_status["latest_message"] = (
                                         file_delete_error
                                     )
-                                    pipeline_status["history_messages"].append(
+                                    append_pipeline_message(pipeline_status,
                                         file_delete_error
                                     )
 
@@ -3096,7 +3135,7 @@ async def background_delete_documents(
                                 logger.info(file_delete_msg)
                                 async with pipeline_status_lock:
                                     pipeline_status["latest_message"] = file_delete_msg
-                                    pipeline_status["history_messages"].append(
+                                    append_pipeline_message(pipeline_status,
                                         file_delete_msg
                                     )
                             else:
@@ -3107,7 +3146,7 @@ async def background_delete_documents(
                                 logger.warning(file_error_msg)
                                 async with pipeline_status_lock:
                                     pipeline_status["latest_message"] = file_error_msg
-                                    pipeline_status["history_messages"].append(
+                                    append_pipeline_message(pipeline_status,
                                         file_error_msg
                                     )
 
@@ -3116,7 +3155,7 @@ async def background_delete_documents(
                             logger.error(file_error_msg)
                             async with pipeline_status_lock:
                                 pipeline_status["latest_message"] = file_error_msg
-                                pipeline_status["history_messages"].append(
+                                append_pipeline_message(pipeline_status,
                                     file_error_msg
                                 )
                     elif delete_file:
@@ -3126,14 +3165,14 @@ async def background_delete_documents(
                         logger.warning(no_file_msg)
                         async with pipeline_status_lock:
                             pipeline_status["latest_message"] = no_file_msg
-                            pipeline_status["history_messages"].append(no_file_msg)
+                            append_pipeline_message(pipeline_status, no_file_msg)
                 else:
                     failed_deletions.append(doc_id)
                     error_msg = f"Failed to delete {i}/{total_docs}: {doc_id}[{file_path}] - {result.message}"
                     logger.error(error_msg)
                     async with pipeline_status_lock:
                         pipeline_status["latest_message"] = error_msg
-                        pipeline_status["history_messages"].append(error_msg)
+                        append_pipeline_message(pipeline_status, error_msg)
 
             except Exception as e:
                 failed_deletions.append(doc_id)
@@ -3142,14 +3181,14 @@ async def background_delete_documents(
                 logger.error(traceback.format_exc())
                 async with pipeline_status_lock:
                     pipeline_status["latest_message"] = error_msg
-                    pipeline_status["history_messages"].append(error_msg)
+                    append_pipeline_message(pipeline_status, error_msg)
 
     except Exception as e:
         error_msg = f"Critical error during batch deletion: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
         async with pipeline_status_lock:
-            pipeline_status["history_messages"].append(error_msg)
+            append_pipeline_message(pipeline_status, error_msg)
     finally:
         # Final summary and check for pending requests
         async with pipeline_status_lock:
@@ -3161,7 +3200,7 @@ async def background_delete_documents(
             )
             completion_msg = f"Deletion completed: {len(successful_deletions)} successful, {len(failed_deletions)} failed"
             pipeline_status["latest_message"] = completion_msg
-            pipeline_status["history_messages"].append(completion_msg)
+            append_pipeline_message(pipeline_status, completion_msg)
 
             # Check if there are pending document indexing requests
             has_pending_request = pipeline_status.get("request_pending", False)
@@ -3326,6 +3365,7 @@ def create_document_routes(
         folder_id: Optional[str] = Form(None),
         fast_index: Annotated[bool, Form()] = False,
     ):
+        from lightrag.kg.shared_storage import get_namespace_data, get_namespace_lock
         
         slot_reserved = False
         allocated_path: Path | None = None
@@ -3373,34 +3413,15 @@ def create_document_routes(
                         f"File size not available in UploadFile for {safe_filename}, will check during streaming"
                     )
 
-            file_path = doc_manager.input_dir / safe_filename
-
-            # Preserve every upload as a separate revision on name conflicts.
-            # Exclusive file creation below also closes simultaneous-upload races.
-            from uuid import uuid4
-
             original_filename = safe_filename
-
-            def next_revision():
-                parts = original_filename.split('.[', 1)
-                if len(parts) == 2:
-                    return f"{parts[0]}-{uuid4().hex[:12]}.[{parts[1]}"
-                name = Path(original_filename)
-                return f"{name.stem}-{uuid4().hex[:12]}{name.suffix}"
-
-            existing_doc = await get_existing_doc_by_file_path_candidates(rag.doc_status, file_path)
-            if existing_doc or find_existing_file_by_file_path(doc_manager.input_dir, normalize_file_path(safe_filename)):
-                safe_filename = next_revision()
-                file_path = doc_manager.input_dir / safe_filename
-            while True:
-                try:
-                    # Reserve before yielding so competing uploads cannot overwrite.
-                    descriptor = os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    allocated_path = file_path
-                    break
-                except FileExistsError:
-                    safe_filename = next_revision()
-                    file_path = doc_manager.input_dir / safe_filename
+            # Keep an accepted upload outside the scan directory until its
+            # target is ready. The old version remains intact while streaming
+            # and size validation run.
+            staging_dir = doc_manager.input_dir / ".upload_staging"
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            file_path = staging_dir / uuid4().hex
+            descriptor = os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            allocated_path = file_path
 
             # Async streaming write with size check
             bytes_written = 0
@@ -3457,17 +3478,124 @@ def create_document_routes(
             # loop's request_pending mechanism.
             #IMPO: 任务处理：将文件加入索引并触发处理流程，然后释放预留的插槽。
             async def _indexing_task():
+                # The staging file is outside scan's top-level file set. A
+                # replacement can therefore wait for the current pipeline
+                # without keeping a pending-enqueue reservation alive.
+                await _release_enqueue_slot(rag)
+                target_key = compute_mdhash_id(
+                    f"{folder_id or ''}\x00{normalize_file_path(original_filename)}",
+                    prefix="upload-target-",
+                )
+                target_lock = get_namespace_lock(target_key, workspace=rag.workspace)
                 try:
-                    # TODO: 任务处理
-                    success, _ = await pipeline_enqueue_file(
-                        rag, file_path, track_id, folder_id=folder_id,
-                        allow_duplicate_content=True, fast_index=fast_index,
-                    )
+                    async with target_lock:
+                        pipeline_status = await get_namespace_data(
+                            "pipeline_status", workspace=rag.workspace
+                        )
+                        pipeline_lock = get_namespace_lock(
+                            "pipeline_status", workspace=rag.workspace
+                        )
+                        previous = await get_uploads_in_target(
+                            rag, original_filename, folder_id
+                        )
+                        replacing = bool(previous)
+                        # New targets keep the ordinary concurrent-enqueue
+                        # contract. Existing targets need an exclusive window
+                        # while their old vectors and graph are removed.
+                        if replacing:
+                            while True:
+                                async with pipeline_lock:
+                                    if not (
+                                        pipeline_status.get("busy")
+                                        or pipeline_status.get("scanning")
+                                        or pipeline_status.get("pending_enqueues", 0)
+                                    ):
+                                        pipeline_status["busy"] = True
+                                        pipeline_status["destructive_busy"] = True
+                                        pipeline_status["job_name"] = "Deleting Upload Documents"
+                                        break
+                                await asyncio.sleep(0.1)
+                        else:
+                            while True:
+                                try:
+                                    await _reserve_enqueue_slot(rag)
+                                    break
+                                except HTTPException as exc:
+                                    if exc.status_code != 409:
+                                        raise
+                                    await asyncio.sleep(0.1)
+                        success = False
+                        try:
+                            for old_id, old_doc in previous:
+                                old_folders = _get_folder_ids_from_metadata(
+                                    old_doc.metadata
+                                )
+                                if folder_id and len(old_folders) > 1:
+                                    stored = await rag.doc_status.get_by_id(old_id)
+                                    if stored:
+                                        metadata = dict(stored.get("metadata") or {})
+                                        remaining = [
+                                            value for value in old_folders
+                                            if value != folder_id
+                                        ]
+                                        metadata["folder_ids"] = remaining
+                                        metadata["folder_id"] = remaining[0]
+                                        stored["metadata"] = metadata
+                                        await rag.doc_status.upsert({old_id: stored})
+                                        await rag.doc_status.index_done_callback()
+                                    continue
+                                result = await rag.adelete_by_doc_id(
+                                    old_id, delete_llm_cache=True
+                                )
+                                if result.status not in ("success", "not_found"):
+                                    raise RuntimeError(
+                                        f"Could not replace {original_filename}: {result.message}"
+                                    )
+                                deleted, errors = delete_file_variants_by_file_path(
+                                    doc_manager.input_dir, old_doc.file_path
+                                )
+                                if errors:
+                                    logger.warning("Old upload file cleanup: %s", errors)
+
+                            target_path = doc_manager.input_dir / original_filename
+                            while True:
+                                existing_name = await get_existing_doc_by_file_path_candidates(
+                                    rag.doc_status, target_path
+                                )
+                                try:
+                                    if existing_name:
+                                        raise FileExistsError(target_path)
+                                    os.link(file_path, target_path)
+                                    break
+                                except FileExistsError:
+                                    parts = original_filename.split('.[', 1)
+                                    if len(parts) == 2:
+                                        revision = f"{parts[0]}-{uuid4().hex[:12]}.[{parts[1]}"
+                                    else:
+                                        name = Path(original_filename)
+                                        revision = f"{name.stem}-{uuid4().hex[:12]}{name.suffix}"
+                                    target_path = doc_manager.input_dir / revision
+                            file_path.unlink()
+                            if replacing:
+                                async with pipeline_lock:
+                                    pipeline_status["destructive_busy"] = False
+                            success, _ = await pipeline_enqueue_file(
+                                rag, target_path, track_id, folder_id=folder_id,
+                                allow_duplicate_content=True,
+                                fast_index=fast_index,
+                                upload_name=original_filename,
+                            )
+                        finally:
+                            if replacing:
+                                async with pipeline_lock:
+                                    pipeline_status["busy"] = False
+                                    pipeline_status["destructive_busy"] = False
+                            else:
+                                await _release_enqueue_slot(rag)
                     if success:
                         await rag.apipeline_process_enqueue_documents(retry_failed=False)
                 finally:
-                    # 最后释放预留的插槽，无论任务成功与否都要确保释放，以避免死锁。
-                    await _release_enqueue_slot(rag)
+                    file_path.unlink(missing_ok=True)
 
             # TODO: 增加任务。
             background_tasks.add_task(_indexing_task)
@@ -3478,7 +3606,7 @@ def create_document_routes(
             #RET:
             return InsertResponse(
                 status="success",
-                message=f"File '{safe_filename}' uploaded successfully. Processing will continue in background.",
+                message=f"File '{original_filename}' uploaded successfully. Processing will continue in background.",
                 track_id=track_id,
             )
 
@@ -3905,7 +4033,7 @@ def create_document_routes(
             )
             # Cleaning history_messages without breaking it as a shared list object
             del pipeline_status["history_messages"][:]
-            pipeline_status["history_messages"].append(
+            append_pipeline_message(pipeline_status,
                 "Starting document clearing process"
             )
 
@@ -3928,7 +4056,7 @@ def create_document_routes(
 
             # Log storage drop start
             if "history_messages" in pipeline_status:
-                pipeline_status["history_messages"].append(
+                append_pipeline_message(pipeline_status,
                     "Starting to drop storage components"
                 )
 
@@ -3962,11 +4090,11 @@ def create_document_routes(
             # Log storage drop results
             if "history_messages" in pipeline_status:
                 if storage_error_count > 0:
-                    pipeline_status["history_messages"].append(
+                    append_pipeline_message(pipeline_status,
                         f"Dropped {storage_success_count} storage components with {storage_error_count} errors"
                     )
                 else:
-                    pipeline_status["history_messages"].append(
+                    append_pipeline_message(pipeline_status,
                         f"Successfully dropped all {storage_success_count} storage components"
                     )
 
@@ -3975,12 +4103,12 @@ def create_document_routes(
                 error_message = "All storage drop operations failed. Aborting document clearing process."
                 logger.error(error_message)
                 if "history_messages" in pipeline_status:
-                    pipeline_status["history_messages"].append(error_message)
+                    append_pipeline_message(pipeline_status, error_message)
                 return ClearDocumentsResponse(status="fail", message=error_message)
 
             # Log file deletion start
             if "history_messages" in pipeline_status:
-                pipeline_status["history_messages"].append(
+                append_pipeline_message(pipeline_status,
                     "Starting to delete files in input directory"
                 )
 
@@ -4000,12 +4128,12 @@ def create_document_routes(
             # Log file deletion results
             if "history_messages" in pipeline_status:
                 if file_errors_count > 0:
-                    pipeline_status["history_messages"].append(
+                    append_pipeline_message(pipeline_status,
                         f"Deleted {deleted_files_count} files with {file_errors_count} errors"
                     )
                     errors.append(f"Failed to delete {file_errors_count} files")
                 else:
-                    pipeline_status["history_messages"].append(
+                    append_pipeline_message(pipeline_status,
                         f"Successfully deleted {deleted_files_count} files"
                     )
 
@@ -4020,7 +4148,7 @@ def create_document_routes(
 
             # Log final result
             if "history_messages" in pipeline_status:
-                pipeline_status["history_messages"].append(final_message)
+                append_pipeline_message(pipeline_status, final_message)
 
             # Return response based on results
             return ClearDocumentsResponse(status=status, message=final_message)
@@ -4029,7 +4157,7 @@ def create_document_routes(
             logger.error(error_msg)
             logger.error(traceback.format_exc())
             if "history_messages" in pipeline_status:
-                pipeline_status["history_messages"].append(error_msg)
+                append_pipeline_message(pipeline_status, error_msg)
             raise HTTPException(status_code=500, detail=str(e))
         finally:
             # Reset busy + destructive_busy after completion so the next
@@ -4040,7 +4168,7 @@ def create_document_routes(
                 completion_msg = "Document clearing process completed"
                 pipeline_status["latest_message"] = completion_msg
                 if "history_messages" in pipeline_status:
-                    pipeline_status["history_messages"].append(completion_msg)
+                    append_pipeline_message(pipeline_status, completion_msg)
 
     @router.get(
         "/pipeline_status",
@@ -4111,6 +4239,9 @@ def create_document_routes(
             # and limit to latest 1000 entries with truncation message if needed
             if "history_messages" in status_dict:
                 history_list = list(status_dict["history_messages"])
+                timing_list = list(status_dict.get("history_message_timings") or [])
+                if len(timing_list) != len(history_list):
+                    timing_list = [None] * len(history_list)
                 total_count = len(history_list)
 
                 if total_count > 1000:
@@ -4127,9 +4258,17 @@ def create_document_routes(
                     status_dict["history_messages"] = [
                         truncation_message
                     ] + latest_messages
+                    status_dict["history_message_timings"] = [None] + timing_list[
+                        -1000:
+                    ]
                 else:
                     # No truncation needed, return all messages
                     status_dict["history_messages"] = history_list
+                    status_dict["history_message_timings"] = timing_list
+            if "llm_call_messages" in status_dict:
+                status_dict["llm_call_messages"] = list(
+                    status_dict["llm_call_messages"]
+                )[-500:]
 
             # Ensure job_start is properly formatted as a string with timezone information
             if "job_start" in status_dict and status_dict["job_start"]:
@@ -4923,7 +5062,7 @@ def create_document_routes(
                 cancel_msg = "Pipeline cancellation requested by user"
                 logger.info(cancel_msg)
                 pipeline_status["latest_message"] = cancel_msg
-                pipeline_status["history_messages"].append(cancel_msg)
+                append_pipeline_message(pipeline_status, cancel_msg)
 
             return CancelPipelineResponse(
                 status="cancellation_requested",

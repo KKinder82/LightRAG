@@ -1289,6 +1289,8 @@ async def initialize_pipeline_status(workspace: str | None = None):
 
         # Create a shared list object for history_messages
         history_messages = _manager.list() if _is_multiprocess else []
+        history_message_timings = _manager.list() if _is_multiprocess else []
+        llm_call_messages = _manager.list() if _is_multiprocess else []
         pipeline_namespace.update(
             {
                 "autoscanned": False,  # Auto-scan started
@@ -1326,6 +1328,9 @@ async def initialize_pipeline_status(workspace: str | None = None):
                 "request_pending": False,  # Flag for pending request for processing
                 "latest_message": "",  # Latest message from pipeline processing
                 "history_messages": history_messages,  # 使用共享列表对象
+                "history_message_timings": history_message_timings,
+                "last_pipeline_message_time": None,
+                "llm_call_messages": llm_call_messages,
             }
         )
 

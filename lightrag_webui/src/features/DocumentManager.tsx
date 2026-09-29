@@ -120,6 +120,10 @@ const buildLegacyDocs = (documents: DocStatusResponse[]): DocsStatusesResponse =
 }
 
 const getDisplayFileName = (doc: DocStatusResponse, maxLength: number = 20): string => {
+  const uploadName = doc.metadata?.upload_name
+  if (typeof uploadName === 'string' && uploadName.trim()) {
+    return uploadName.length > maxLength ? `${uploadName.slice(0, maxLength)}...` : uploadName
+  }
   // Check if file_path exists and is a non-empty string
   if (!doc.file_path || typeof doc.file_path !== 'string' || doc.file_path.trim() === '') {
     return doc.id;
@@ -1755,7 +1759,7 @@ export default function DocumentManager() {
                                         </div>
                                       </TooltipTrigger>
                                       <TooltipContent side="top" className="max-w-2xl">
-                                        {doc.file_path}
+                                        {doc.metadata?.upload_name || doc.file_path}
                                       </TooltipContent>
                                     </Tooltip>
                                     <div className="text-xs text-gray-500">{doc.id}</div>
@@ -1789,9 +1793,13 @@ export default function DocumentManager() {
                                 <div className="flex items-center">
                                   {(() => {
                                     const statusDisplay = getStatusDisplay(doc.status)
+                                    const kgStatus = doc.metadata?.kg_status
                                     return (
                                       <span className={statusDisplay.className}>
-                                        {t(statusDisplay.labelKey)}
+                                        {t(statusDisplay.labelKey)}{doc.status === 'processed' && (kgStatus === 'completed' || (!kgStatus && !doc.metadata?.skip_kg)) ? ' (KG)' : ''}
+                                        {doc.status === 'processed' && kgStatus === 'failed' && (
+                                          <span className="text-amber-600"> {t('documentPanel.documentManager.status.kgFailed')}</span>
+                                        )}
                                       </span>
                                     )
                                   })()}

@@ -369,6 +369,8 @@ export type PipelineStatusResponse = {
   cancellation_requested?: boolean
   latest_message: string
   history_messages?: string[]
+  history_message_timings?: ({ time: string; elapsed_seconds: number | null } | null)[]
+  llm_call_messages?: { time: string; role: string; model: string; status: string; duration_seconds: number; error_type?: string | null }[]
   update_status?: Record<string, any>
 }
 

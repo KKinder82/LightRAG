@@ -31,6 +31,7 @@ export default function PipelineStatusDialog({
   const [position, setPosition] = useState<DialogPosition>('center')
   const [isUserScrolled, setIsUserScrolled] = useState(false)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [messageView, setMessageView] = useState<'pipeline' | 'llm'>('pipeline')
   const historyRef = useRef<HTMLDivElement>(null)
 
   // Reset UI state whenever the controlling open prop changes.
@@ -40,6 +41,7 @@ export default function PipelineStatusDialog({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPosition('center')
       setIsUserScrolled(false)
+      setMessageView('pipeline')
       return
     }
 
@@ -52,7 +54,7 @@ export default function PipelineStatusDialog({
     if (!container || isUserScrolled) return
 
     container.scrollTop = container.scrollHeight
-  }, [status?.history_messages, isUserScrolled])
+  }, [status?.history_messages, status?.llm_call_messages, isUserScrolled, messageView])
 
   const handleScroll = () => {
     const container = historyRef.current
@@ -225,17 +227,36 @@ export default function PipelineStatusDialog({
 
           {/* History Messages */}
           <div className="space-y-2">
-            <div className="text-sm font-medium">{t('documentPanel.pipelineStatus.pipelineMessages')}:</div>
+            <div className="flex gap-2">
+              <Button size="sm" variant={messageView === 'pipeline' ? 'default' : 'ghost'} onClick={() => setMessageView('pipeline')}>
+                {t('documentPanel.pipelineStatus.pipelineMessages')}
+              </Button>
+              <Button size="sm" variant={messageView === 'llm' ? 'default' : 'ghost'} onClick={() => setMessageView('llm')}>
+                {t('documentPanel.pipelineStatus.llmCalls')}
+              </Button>
+            </div>
             <div
               ref={historyRef}
               onScroll={handleScroll}
               className="font-mono text-xs rounded-md bg-zinc-800 text-zinc-100 p-3 overflow-y-auto overflow-x-hidden min-h-[7.5em] max-h-[40vh]"
             >
-              {status?.history_messages?.length ? (
-                status.history_messages.map((msg, idx) => (
-                  <div key={idx} className="whitespace-pre-wrap break-all">{msg}</div>
-                ))
-              ) : '-'}
+              {messageView === 'pipeline' ? (
+                status?.history_messages?.length ? status.history_messages.map((msg, idx) => {
+                  const timing = status.history_message_timings?.[idx]
+                  return (
+                    <div key={idx} className="whitespace-pre-wrap break-all">
+                      {timing && <span className="text-zinc-400">[{new Date(timing.time).toLocaleTimeString()} · {timing.elapsed_seconds === null ? '-' : `+${timing.elapsed_seconds.toFixed(2)}s`}] </span>}
+                      {msg}
+                    </div>
+                  )
+                }) : '-'
+              ) : (
+                status?.llm_call_messages?.length ? status.llm_call_messages.map((call, idx) => (
+                  <div key={idx} className="whitespace-pre-wrap break-all">
+                    [{new Date(call.time).toLocaleTimeString()}] {call.role} · {call.model} · {call.status}{call.error_type ? ` (${call.error_type})` : ''} · {call.duration_seconds.toFixed(2)}s
+                  </div>
+                )) : '-'
+              )}
             </div>
           </div>
         </div>

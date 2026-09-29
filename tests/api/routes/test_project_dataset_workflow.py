@@ -14,7 +14,7 @@ from lightrag.kg.shared_storage import get_namespace_data
 pytestmark = pytest.mark.offline
 
 
-async def test_repeat_upload_keeps_both_versions(upload_app):
+async def test_repeat_upload_replaces_previous_content_in_same_folder(upload_app):
     client, rag, folder, _ = upload_app
     for content in (b"repeated content", b"repeated content", b"changed content"):
         response = await client.post(
@@ -25,8 +25,13 @@ async def test_repeat_upload_keeps_both_versions(upload_app):
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "success"
     docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
-    assert len(docs) == 3
-    assert len({doc.file_path for doc in docs.values()}) == 3
+    assert len(docs) == 1
+    doc_id, doc = next(iter(docs.items()))
+    assert doc.metadata["upload_name"] == "same.txt"
+    assert "changed content" in (await rag.full_docs.get_by_id(doc_id))["content"]
+    chunks = await rag.text_chunks.get_by_ids(doc.chunks_list)
+    assert all("changed content" in item["content"] for item in chunks)
+    assert all("repeated content" not in item["content"] for item in chunks)
 
 
 async def test_fast_index_skips_extraction_and_releases_slot_on_completion(
@@ -38,7 +43,7 @@ async def test_fast_index_skips_extraction_and_releases_slot_on_completion(
 
     async def checked_process(*args, **kwargs):
         status = await get_namespace_data("pipeline_status", workspace=rag.workspace)
-        assert status["pending_enqueues"] == 1
+        assert status["pending_enqueues"] == 0
         return await original(*args, **kwargs)
 
     async def unexpected_llm(*args, **kwargs):
@@ -170,7 +175,7 @@ async def test_project_upload_graph_and_query_isolation(upload_app, tmp_path):
         await datasets.close()
 
 
-async def test_concurrent_same_filename_uploads_are_independent(upload_app):
+async def test_concurrent_same_filename_uploads_leave_one_version(upload_app):
     client, rag, _, _ = upload_app
     responses = await asyncio.gather(
         *[
@@ -186,17 +191,18 @@ async def test_concurrent_same_filename_uploads_are_independent(upload_app):
     # A second enqueue may nudge the first processing loop; all background tasks
     # have completed when ASGITransport returns the responses.
     docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
-    assert len(docs) == 3
-    assert len({doc.file_path for doc in docs.values()}) == 3
+    assert len(docs) == 1
+    assert next(iter(docs.values())).metadata["upload_name"] == "race.txt"
 
 
-async def test_deleting_one_duplicate_keeps_other_versions(upload_app):
-    client, rag, _, _ = upload_app
-    for _ in range(2):
+async def test_deleting_one_folder_copy_keeps_other_folder(upload_app):
+    client, rag, folder, _ = upload_app
+    other_folder = await rag.folder_manager.create_folder("Other upload folder")
+    for target in (folder.id, other_folder.id):
         await client.post(
             "/documents/upload",
             files={"file": ("version.txt", b"shared text content")},
-            data={"fast_index": "true"},
+            data={"fast_index": "true", "folder_id": target},
         )
     docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
     first, second = list(docs)
@@ -208,6 +214,87 @@ async def test_deleting_one_duplicate_keeps_other_versions(upload_app):
     assert await rag.doc_status.get_by_id(first) is None
     assert await rag.doc_status.get_by_id(second) is not None
     assert all(await rag.text_chunks.get_by_ids(docs[second].chunks_list))
+
+
+async def test_replace_in_one_folder_preserves_same_name_in_other(upload_app):
+    client, rag, folder, _ = upload_app
+    other = await rag.folder_manager.create_folder("Other folder")
+    for target, body in (
+        (folder.id, b"first folder old"),
+        (other.id, b"second folder stays"),
+        (folder.id, b"first folder new"),
+    ):
+        response = await client.post(
+            "/documents/upload",
+            files={"file": ("shared.txt", body)},
+            data={"folder_id": target, "fast_index": "true"},
+        )
+        assert response.status_code == 200, response.text
+
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
+    assert len(docs) == 2
+    by_folder = {
+        doc.metadata["folder_id"]: await rag.full_docs.get_by_id(doc_id)
+        for doc_id, doc in docs.items()
+    }
+    assert "first folder new" in by_folder[folder.id]["content"]
+    assert "second folder stays" in by_folder[other.id]["content"]
+    assert all(doc.metadata["upload_name"] == "shared.txt" for doc in docs.values())
+
+
+async def test_replacing_legacy_shared_document_detaches_only_target(upload_app):
+    client, rag, folder, _ = upload_app
+    other = await rag.folder_manager.create_folder("Legacy shared folder")
+    response = await client.post(
+        "/documents/upload",
+        files={"file": ("legacy-shared.txt", b"shared old body")},
+        data={"folder_id": folder.id, "fast_index": "true"},
+    )
+    assert response.status_code == 200
+    old_docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
+    old_id = next(iter(old_docs))
+    old_record = await rag.doc_status.get_by_id(old_id)
+    old_record["metadata"]["folder_ids"] = [folder.id, other.id]
+    await rag.doc_status.upsert({old_id: old_record})
+    await rag.doc_status.index_done_callback()
+
+    response = await client.post(
+        "/documents/upload",
+        files={"file": ("legacy-shared.txt", b"replacement body")},
+        data={"folder_id": folder.id, "fast_index": "true"},
+    )
+    assert response.status_code == 200
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
+    assert len(docs) == 2
+    assert docs[old_id].metadata["folder_ids"] == [other.id]
+    assert "shared old body" in (await rag.full_docs.get_by_id(old_id))["content"]
+    replacement = next(doc_id for doc_id in docs if doc_id != old_id)
+    assert docs[replacement].metadata["folder_ids"] == [folder.id]
+    assert "replacement body" in (await rag.full_docs.get_by_id(replacement))["content"]
+
+
+async def test_rejected_replacement_keeps_previous_document(upload_app, monkeypatch):
+    from types import SimpleNamespace
+
+    client, rag, folder, _ = upload_app
+    first = await client.post(
+        "/documents/upload",
+        files={"file": ("keep.txt", b"keep original content")},
+        data={"folder_id": folder.id, "fast_index": "true"},
+    )
+    assert first.status_code == 200
+    monkeypatch.setattr(routes, "global_args", SimpleNamespace(max_upload_size=5))
+    rejected = await client.post(
+        "/documents/upload",
+        files={"file": ("keep.txt", b"oversized replacement")},
+        data={"folder_id": folder.id},
+    )
+    assert rejected.status_code == 413
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
+    assert len(docs) == 1
+    assert "keep original content" in (
+        await rag.full_docs.get_by_id(next(iter(docs)))
+    )["content"]
 
 
 async def test_project_dispatch_respects_proxy_root_path():

@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lightrag.pipeline_messages import append_pipeline_message
 from lightrag.base import DocProcessingStatus, DocStatus
 from lightrag.constants import (
     FULL_DOCS_FORMAT_LIGHTRAG,
@@ -221,6 +222,7 @@ class _PipelineMixin:
         from_scan: bool = False,
         folder_id: str | None = None,
         allow_duplicate_content: bool = False,
+        upload_name: str | None = None,
     ) -> str:
         # 串行加入文档自理队伍
         """
@@ -545,6 +547,8 @@ class _PipelineMixin:
             content_data["chunk_options"] = _chunk_options_at(index)
             if folder_id:
                 content_data["folder_id"] = folder_id
+            if upload_name:
+                content_data["upload_name"] = upload_name
             #IMPO: 处理后的内容加入了 contents 字典，键是 doc_id，值是 content_data 包含内容、文件路径、格式、哈希等信息。
             contents[doc_id] = content_data
 
@@ -672,6 +676,8 @@ class _PipelineMixin:
             source_file_name = content_data.get("source_file_name")
             if source_file_name:
                 metadata["source_file_name"] = source_file_name
+            if content_data.get("upload_name"):
+                metadata["upload_name"] = content_data["upload_name"]
             doc_folder_id = content_data.get("folder_id")
             if doc_folder_id:
                 metadata["folder_ids"] = [doc_folder_id]
@@ -1147,7 +1153,7 @@ class _PipelineMixin:
                         log_message = "Pipeline cancelled by user"
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
-                        pipeline_status["history_messages"].append(log_message)
+                        append_pipeline_message(pipeline_status, log_message)
 
                         # Exit directly, skipping request_pending check
                         return
@@ -1157,7 +1163,7 @@ class _PipelineMixin:
                     log_message = "All enqueued documents have been processed"
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
-                    pipeline_status["history_messages"].append(log_message)
+                    append_pipeline_message(pipeline_status, log_message)
                     if await self._atomic_release_busy_or_consume_pending(
                         pipeline_status, pipeline_status_lock
                     ):
@@ -1181,7 +1187,7 @@ class _PipelineMixin:
                     )
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
-                    pipeline_status["history_messages"].append(log_message)
+                    append_pipeline_message(pipeline_status, log_message)
                     if await self._atomic_release_busy_or_consume_pending(
                         pipeline_status, pipeline_status_lock
                     ):
@@ -1202,7 +1208,7 @@ class _PipelineMixin:
                 pipeline_status["cur_batch"] = 0
                 # MARK: 日志
                 pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                append_pipeline_message(pipeline_status, log_message)
 
                 # NEXT: 批量处理. 
                 await self._run_pipeline_batch(
@@ -1228,7 +1234,7 @@ class _PipelineMixin:
                 log_message = "Processing additional documents due to pending request"
                 logger.info(log_message)
                 pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                append_pipeline_message(pipeline_status, log_message)
 
                 # Check for pending documents again
                 #　获取新任务
@@ -1251,7 +1257,7 @@ class _PipelineMixin:
                     False  # MARK: 重置 取消任务请求(没有任务了, 也就不用取消了)
                 )
                 pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                append_pipeline_message(pipeline_status, log_message)
 
     # ============================================================
     # Pipeline orchestration
@@ -1384,7 +1390,7 @@ class _PipelineMixin:
                 logger.info(preserve_message)
                 # 记录日志，说明我们发现了一些不一致的文档条目，但它们的状态是 FAILED，所以我们决定保留它们以供后续人工审查。这有助于我们了解数据质量问题，同时避免误删可能有价值的失败记录。
                 pipeline_status["latest_message"] = preserve_message
-                pipeline_status["history_messages"].append(preserve_message)
+                append_pipeline_message(pipeline_status, preserve_message)
 
             # Remove failed documents from processing list but keep them in doc_status
             for doc_id in failed_docs_to_preserve:
@@ -1400,7 +1406,7 @@ class _PipelineMixin:
                 )
                 logger.info(summary_message)
                 pipeline_status["latest_message"] = summary_message
-                pipeline_status["history_messages"].append(summary_message)
+                append_pipeline_message(pipeline_status, summary_message)
 
             successful_deletions = 0
             for doc_id in inconsistent_docs:
@@ -1421,7 +1427,7 @@ class _PipelineMixin:
                         )
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
-                        pipeline_status["history_messages"].append(log_message)
+                        append_pipeline_message(pipeline_status, log_message)
 
                     # Remove from processing list
                     # MARK: 从待处理列表中移除这个不一致的文档条目
@@ -1433,7 +1439,7 @@ class _PipelineMixin:
                         error_message = f"Failed to delete entry: {doc_id} - {str(e)}"
                         logger.error(error_message)
                         pipeline_status["latest_message"] = error_message
-                        pipeline_status["history_messages"].append(error_message)
+                        append_pipeline_message(pipeline_status, error_message)
 
         # Final summary log
         # async with pipeline_status_lock:
@@ -1505,7 +1511,7 @@ class _PipelineMixin:
                 )
                 logger.info(reset_message)
                 pipeline_status["latest_message"] = reset_message
-                pipeline_status["history_messages"].append(reset_message)
+                append_pipeline_message(pipeline_status, reset_message)
 
         return to_process_docs
 
@@ -1650,7 +1656,7 @@ class _PipelineMixin:
                     log_message = f"Parsing ({engine}): {doc_id_w}"
                     logger.info(log_message)
                     ctx.pipeline_status["latest_message"] = log_message
-                    ctx.pipeline_status["history_messages"].append(log_message)
+                    append_pipeline_message(ctx.pipeline_status, log_message)
                 if engine == "mineru":
                     # NEXT:
                     parsed_data_w = await self.parse_mineru(
@@ -1902,7 +1908,10 @@ class _PipelineMixin:
         file_path = resolve_doc_file_path(status_doc=status_doc)
         current_file_number = 0
         file_extraction_stage_ok = False
+        text_completed = False
         processing_start_time = int(time.time())
+        processing_start_clock = time.monotonic()
+        text_completed_time: int | None = None
         first_stage_tasks: list[asyncio.Task] = []
         entity_relation_task: asyncio.Task | None = None
         chunks: dict[str, Any] = {}
@@ -1947,11 +1956,11 @@ class _PipelineMixin:
                         f"{ctx.total_files}: {file_path}"
                     )
                     logger.info(log_message)
-                    ctx.pipeline_status["history_messages"].append(log_message)
+                    append_pipeline_message(ctx.pipeline_status, log_message)
                     log_message = f"Processing d-id: {doc_id}"
                     logger.info(log_message)
                     ctx.pipeline_status["latest_message"] = log_message
-                    ctx.pipeline_status["history_messages"].append(log_message)
+                    append_pipeline_message(ctx.pipeline_status, log_message)
 
                     # Prevent memory growth: keep only latest 5000 messages
                     # when exceeding 10000.  Trim in place so Manager.list-
@@ -1962,6 +1971,9 @@ class _PipelineMixin:
                             f"Trimming pipeline history from {len(ctx.pipeline_status['history_messages'])} to 5000 messages"
                         )
                         del ctx.pipeline_status["history_messages"][:-5000]
+                        timings = ctx.pipeline_status.get("history_message_timings")
+                        if timings is not None:
+                            del timings[:-5000]
 
                 content = parsed_data.get("content", "")
 
@@ -2272,6 +2284,39 @@ class _PipelineMixin:
 
                 await asyncio.gather(*first_stage_tasks)
 
+                # Text search is available as soon as chunk vectors and text
+                # have been persisted. KG work continues after this point.
+                await self._insert_done()
+                text_completed_time = int(time.time())
+                await self._upsert_doc_status_transition(
+                    doc_id=doc_id,
+                    status=DocStatus.PROCESSED,
+                    status_doc=status_doc,
+                    file_path=file_path,
+                    extra_fields={
+                        "chunks_count": len(chunks),
+                        "chunks_list": list(chunks.keys()),
+                    },
+                    metadata_extra={
+                        "processing_start_time": processing_start_time,
+                        "processing_end_time": text_completed_time,
+                        "kg_status": (
+                            "skipped" if doc_process_opts.skip_kg else "running"
+                        ),
+                        **extraction_meta,
+                    },
+                )
+                await self.doc_status.index_done_callback()
+                text_completed = True
+                async with ctx.pipeline_status_lock:
+                    message = (
+                        f"Text vectors completed for {file_path} "
+                        f"({time.monotonic() - processing_start_clock:.2f}s)"
+                    )
+                    ctx.pipeline_status["latest_message"] = message
+                    append_pipeline_message(ctx.pipeline_status, message)
+                kg_start_clock = time.monotonic()
+
                 # Stage 2: entity/relation extraction (after text_chunks are
                 # saved).  When the user opted out via process_options '!',
                 # skip extraction entirely; chunks remain in the vector
@@ -2295,6 +2340,32 @@ class _PipelineMixin:
                 file_extraction_stage_ok = True
 
             except Exception as e:
+                if text_completed:
+                    logger.exception("KG extraction failed for document %s", doc_id)
+                    await self._upsert_doc_status_transition(
+                        doc_id=doc_id,
+                        status=DocStatus.PROCESSED,
+                        status_doc=status_doc,
+                        file_path=file_path,
+                        extra_fields={
+                            "chunks_count": len(chunks),
+                            "chunks_list": list(chunks.keys()),
+                        },
+                        metadata_extra={
+                            "processing_start_time": processing_start_time,
+                            "processing_end_time": text_completed_time,
+                            "kg_end_time": int(time.time()),
+                            "kg_status": "failed",
+                            "kg_error": str(e),
+                            **extraction_meta,
+                        },
+                    )
+                    await self._insert_done()
+                    async with ctx.pipeline_status_lock:
+                        message = f"KG extraction failed for {file_path}: {e}"
+                        ctx.pipeline_status["latest_message"] = message
+                        append_pipeline_message(ctx.pipeline_status, message)
+                    return
                 pending_tasks = first_stage_tasks + (
                     [entity_relation_task] if entity_relation_task else []
                 )
@@ -2349,6 +2420,7 @@ class _PipelineMixin:
                             file_path=file_path,
                         )
 
+                    await self._insert_done()
                     processing_end_time = int(time.time())
                     await self._upsert_doc_status_transition(
                         doc_id=doc_id,
@@ -2361,42 +2433,52 @@ class _PipelineMixin:
                         },
                         metadata_extra={
                             "processing_start_time": processing_start_time,
-                            "processing_end_time": processing_end_time,
+                            "processing_end_time": text_completed_time,
+                            "kg_end_time": processing_end_time,
+                            "kg_status": (
+                                "skipped" if doc_process_opts.skip_kg else "completed"
+                            ),
                             **extraction_meta,
                         },
                     )
-
-                    await self._insert_done()
+                    await self.doc_status.index_done_callback()
 
                     async with ctx.pipeline_status_lock:
                         log_message = (
                             f"Completed processing file "
                             f"{current_file_number}/{ctx.total_files}: "
-                            f"{file_path}"
+                            f"{file_path} "
+                            f"(KG: {time.monotonic() - kg_start_clock:.2f}s)"
                         )
                         logger.info(log_message)
                         ctx.pipeline_status["latest_message"] = log_message
-                        ctx.pipeline_status["history_messages"].append(log_message)
+                        append_pipeline_message(ctx.pipeline_status, log_message)
 
                 except Exception as e:
-                    await self._finalize_doc_failure(
+                    logger.exception("KG processing failed for document %s", doc_id)
+                    await self._upsert_doc_status_transition(
                         doc_id=doc_id,
+                        status=DocStatus.PROCESSED,
                         status_doc=status_doc,
                         file_path=file_path,
-                        error=e,
-                        stage_label="merge",
-                        current_file_number=current_file_number,
-                        total_files=ctx.total_files,
-                        failed_chunks_snapshot=get_failed_chunk_snapshot(),
-                        pending_tasks=[],
+                        extra_fields={
+                            "chunks_count": len(chunks),
+                            "chunks_list": list(chunks.keys()),
+                        },
                         metadata_extra={
                             "processing_start_time": processing_start_time,
-                            "processing_end_time": int(time.time()),
+                            "processing_end_time": text_completed_time,
+                            "kg_end_time": int(time.time()),
+                            "kg_status": "failed",
+                            "kg_error": str(e),
                             **extraction_meta,
                         },
-                        pipeline_status=ctx.pipeline_status,
-                        pipeline_status_lock=ctx.pipeline_status_lock,
                     )
+                    await self._insert_done()
+                    async with ctx.pipeline_status_lock:
+                        message = f"KG processing failed for {file_path}: {e}"
+                        ctx.pipeline_status["latest_message"] = message
+                        append_pipeline_message(ctx.pipeline_status, message)
 
     async def _purge_stale_extraction_if_resuming(
         self,
@@ -2446,7 +2528,7 @@ class _PipelineMixin:
             logger.warning(log_message)
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                append_pipeline_message(pipeline_status, log_message)
 
         stored_chunk_ids = {
             chunk_id
@@ -2466,7 +2548,7 @@ class _PipelineMixin:
         logger.info(log_message)
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = log_message
-            pipeline_status["history_messages"].append(log_message)
+            append_pipeline_message(pipeline_status, log_message)
         await self._purge_doc_chunks_and_kg(
             doc_id,
             stored_chunk_ids,
@@ -2563,7 +2645,7 @@ class _PipelineMixin:
         logger.warning(error_msg)
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = error_msg
-            pipeline_status["history_messages"].append(error_msg)
+            append_pipeline_message(pipeline_status, error_msg)
         if self.llm_response_cache:
             try:
                 # 持久化 llm_结果缓冲
@@ -2617,7 +2699,7 @@ class _PipelineMixin:
             logger.warning(error_msg)
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = error_msg
-                pipeline_status["history_messages"].append(error_msg)
+                append_pipeline_message(pipeline_status, error_msg)
         else:
             logger.error(traceback.format_exc())
             if stage_label == "merge":
@@ -2633,8 +2715,8 @@ class _PipelineMixin:
             logger.error(error_msg)
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = error_msg
-                pipeline_status["history_messages"].append(traceback.format_exc())
-                pipeline_status["history_messages"].append(error_msg)
+                append_pipeline_message(pipeline_status, traceback.format_exc())
+                append_pipeline_message(pipeline_status, error_msg)
 
         for task in pending_tasks:
             if task and not task.done():
@@ -3238,7 +3320,7 @@ class _PipelineMixin:
         if pipeline_status is not None and pipeline_status_lock is not None:
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = warning
-                pipeline_status["history_messages"].append(warning)
+                append_pipeline_message(pipeline_status, warning)
         return True
 
     def _resolve_source_file_for_parser(
@@ -4456,7 +4538,7 @@ class _PipelineMixin:
                     if pipeline_status is not None and pipeline_status_lock is not None:
                         async with pipeline_status_lock:
                             pipeline_status["latest_message"] = log_message
-                            pipeline_status["history_messages"].append(log_message)
+                            append_pipeline_message(pipeline_status, log_message)
                     raise
                 result_obj = result[0] if isinstance(result, tuple) else {}
                 is_success = (
@@ -4469,7 +4551,7 @@ class _PipelineMixin:
                     if pipeline_status is not None and pipeline_status_lock is not None:
                         async with pipeline_status_lock:
                             pipeline_status["latest_message"] = log_message
-                            pipeline_status["history_messages"].append(log_message)
+                            append_pipeline_message(pipeline_status, log_message)
                 else:
                     logger.debug(f"Analyzing  {kind}/{item_id}: skipped")
                 return result
@@ -4521,7 +4603,7 @@ class _PipelineMixin:
                         log_message = f"Analyzing multimodal: {doc_id}"
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
-                        pipeline_status["history_messages"].append(log_message)
+                        append_pipeline_message(pipeline_status, log_message)
                     start_logged = True
 
                 # Pre-schedule cancellation check: if the user cancelled
