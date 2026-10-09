@@ -254,6 +254,7 @@
       "unit": "批",
       "pipelineMessages": "流水线消息",
       "llmCalls": "LLM 调用",
+      "callbackLogs": "回调日志",
       "cancelButton": "中断",
       "cancelTooltip": "中断流水线处理",
       "cancelConfirmTitle": "确认中断流水线",

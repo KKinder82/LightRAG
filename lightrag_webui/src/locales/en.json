@@ -254,6 +254,7 @@
       "unit": "Batch",
       "pipelineMessages": "Pipeline Messages",
       "llmCalls": "LLM Calls",
+      "callbackLogs": "Callback Logs",
       "cancelButton": "Cancel",
       "cancelTooltip": "Cancel pipeline processing",
       "cancelConfirmTitle": "Confirm Pipeline Cancellation",

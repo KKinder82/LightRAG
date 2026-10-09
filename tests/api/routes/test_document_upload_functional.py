@@ -181,6 +181,95 @@ async def test_missing_file_field_returns_validation_error(upload_app):
     assert response.json()["detail"][0]["loc"] == ["body", "file"]
 
 
+@pytest.mark.parametrize("mode", ["normal", "fast", "parse_failed", "kg_failed"])
+@pytest.mark.parametrize("callback_url", ["http://caller.example/finished", "http://user:password@caller.example/finished"])
+async def test_upload_completion_callback(upload_app, monkeypatch, mode, callback_url):
+    from lightrag.api import upload_callbacks
+
+    client, rag, _, _ = upload_app
+    received = []
+
+    async def capture(url, payload, **kwargs):
+        received.append((url, payload))
+
+    async def fail_kg(*args, **kwargs):
+        raise RuntimeError("KG test failure")
+
+    monkeypatch.setattr(upload_callbacks, "send_upload_callback", capture)
+    if mode == "kg_failed":
+        monkeypatch.setattr(rag, "_process_extract_entities", fail_kg)
+    response = await client.post(
+        "/documents/upload",
+        files={"file": ("callback.txt", b"" if mode == "parse_failed" else b"Callback document.")},
+        data={"callback_url": callback_url, "fast_index": str(mode == "fast").lower()},
+    )
+    assert response.status_code == 200, response.text
+    assert len(received) == 1
+    url, payload = received[0]
+    assert url == callback_url
+    assert payload["track_id"] == response.json()["track_id"]
+    assert payload["event_id"] == payload["track_id"]
+    assert payload["filename"] == "callback.txt"
+    assert payload["status"] == ("failed" if "failed" in mode else "processed")
+    assert len(payload["documents"]) == 1
+    doc = payload["documents"][0]
+    if mode == "normal":
+        assert doc["kg_status"] == "completed"
+    elif mode == "fast":
+        assert doc["kg_status"] == "skipped"
+    else:
+        assert doc["error"]
+
+
+@pytest.mark.parametrize("url", ["invalid", "ftp://caller.example/file"])
+async def test_invalid_callback_url_rejected_before_upload(upload_app, url):
+    client, rag, _, input_dir = upload_app
+    response = await client.post(
+        "/documents/upload", files={"file": ("invalid-callback.txt", b"content")},
+        data={"callback_url": url},
+    )
+    assert response.status_code == 422
+    assert not list(input_dir.rglob("invalid-callback*"))
+    status = await get_namespace_data("pipeline_status", workspace=rag.workspace)
+    assert status.get("pending_enqueues", 0) == 0
+
+
+async def test_callback_delivery_logs_visible_in_webui_status(upload_app, monkeypatch):
+    import httpx
+    from lightrag.api import upload_callbacks
+
+    client, _, _, _ = upload_app
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(500 if len(requests) == 1 else 204)
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        upload_callbacks.httpx, "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    response = await client.post(
+        "/documents/upload", files={"file": ("callback-log.txt", b"Callback log document.")},
+        data={"callback_url": "http://user:secret@caller.example/done?token=private-token"},
+    )
+    assert response.status_code == 200, response.text
+    status_response = await client.get("/documents/pipeline_status")
+    assert status_response.status_code == 200, status_response.text
+    status = status_response.json()
+    messages = [msg for msg in status["history_messages"] if msg.startswith("[callback_url]")]
+    assert len(messages) == 5
+    assert "Sending" in messages[0]
+    assert "HTTP=500" in messages[1]
+    assert "Retry scheduled" in messages[2]
+    assert "Success" in messages[-1] and "HTTP=204" in messages[-1]
+    assert all(response.json()["track_id"] in msg for msg in messages)
+    assert all("secret" not in msg and "private-token" not in msg for msg in messages)
+    assert len(status["history_message_timings"]) == len(status["history_messages"])
+    assert status["history_message_timings"][-1]["time"]
+
+
 @pytest.mark.parametrize(
     "filename, content",
     [

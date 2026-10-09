@@ -24,7 +24,9 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+
+from lightrag.api.upload_callbacks import run_upload_with_callback
 
 from lightrag.parser.office_ocr import extract_legacy_or_image
 from lightrag.parser.visual_ocr import extract_visual_document
@@ -3364,6 +3366,12 @@ def create_document_routes(
         file: UploadFile = File(...),
         folder_id: Optional[str] = Form(None),
         fast_index: Annotated[bool, Form()] = False,
+        callback_url: Annotated[
+            HttpUrl | None,
+            Form(
+                description="Optional HTTP(S) URL receiving a JSON POST after processing completes or fails"
+            ),
+        ] = None,
     ):
         from lightrag.kg.shared_storage import get_namespace_data, get_namespace_lock
         
@@ -3598,7 +3606,13 @@ def create_document_routes(
                     file_path.unlink(missing_ok=True)
 
             # TODO: 增加任务。
-            background_tasks.add_task(_indexing_task)
+            background_tasks.add_task(
+                run_upload_with_callback,
+                _indexing_task,
+                rag,
+                str(callback_url) if callback_url is not None else None,
+                track_id, original_filename,
+            )
             # Ownership of the slot transferred to the bg task — the
             # finally block below must NOT release it again.
             slot_reserved = False

@@ -31,7 +31,7 @@ export default function PipelineStatusDialog({
   const [position, setPosition] = useState<DialogPosition>('center')
   const [isUserScrolled, setIsUserScrolled] = useState(false)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
-  const [messageView, setMessageView] = useState<'pipeline' | 'llm'>('pipeline')
+  const [messageView, setMessageView] = useState<'pipeline' | 'llm' | 'callback'>('pipeline')
   const historyRef = useRef<HTMLDivElement>(null)
 
   // Reset UI state whenever the controlling open prop changes.
@@ -106,6 +106,9 @@ export default function PipelineStatusDialog({
 
   // Determine if cancel button should be enabled
   const canCancel = status?.busy === true && !status?.cancellation_requested
+  const visibleMessages = (status?.history_messages ?? [])
+    .map((msg, idx) => ({ msg, idx }))
+    .filter(({ msg }) => messageView !== 'callback' || msg.startsWith('[callback_url]'))
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -234,14 +237,17 @@ export default function PipelineStatusDialog({
               <Button size="sm" variant={messageView === 'llm' ? 'default' : 'ghost'} onClick={() => setMessageView('llm')}>
                 {t('documentPanel.pipelineStatus.llmCalls')}
               </Button>
+              <Button size="sm" variant={messageView === 'callback' ? 'default' : 'ghost'} onClick={() => setMessageView('callback')}>
+                {t('documentPanel.pipelineStatus.callbackLogs', { defaultValue: 'callback_url' })}
+              </Button>
             </div>
             <div
               ref={historyRef}
               onScroll={handleScroll}
               className="font-mono text-xs rounded-md bg-zinc-800 text-zinc-100 p-3 overflow-y-auto overflow-x-hidden min-h-[7.5em] max-h-[40vh]"
             >
-              {messageView === 'pipeline' ? (
-                status?.history_messages?.length ? status.history_messages.map((msg, idx) => {
+              {messageView !== 'llm' ? (
+                visibleMessages.length ? visibleMessages.map(({ msg, idx }) => {
                   const timing = status.history_message_timings?.[idx]
                   return (
                     <div key={idx} className="whitespace-pre-wrap break-all">
