@@ -29,6 +29,7 @@ from typing import (
     Dict,
     Union,
 )
+from lightrag.chunk_blocks import ChunkBlockVectorStorage
 from lightrag.prompt import (
     PROMPTS,
     get_default_entity_extraction_prompt_profile,
@@ -268,6 +269,11 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     #MARK: Text chunking
     # Text chunking
     # ---
+
+    block_count: int = field(
+        default_factory=lambda: int(os.getenv("CHUNK_BLOCKS_COUNT", "1"))
+    )
+    """Number of retrieval blocks per chunk; original chunk text is preserved."""
 
     chunk_token_size: int | None = field(default=None)
     """Maximum number of tokens per text chunk when splitting documents.
@@ -866,6 +872,13 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 "Set addon_params={'entity_types_guidance': '...'} or replace the prompt template."
             )
 
+        if (
+            isinstance(self.block_count, bool)
+            or not isinstance(self.block_count, int)
+            or self.block_count < 1
+        ):
+            raise ValueError("block_count must be a positive integer")
+
         self._replace_addon_params(addon_params, mark_dirty=False)
         self._apply_chunk_size_overlay()
         self._refresh_addon_params_cache()
@@ -1074,6 +1087,10 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             workspace=self.workspace,
             embedding_func=self.embedding_func,
             meta_fields={"full_doc_id", "content", "file_path"},
+        )
+
+        self.chunks_vdb = ChunkBlockVectorStorage(
+            self.chunks_vdb, self.text_chunks, self.block_count
         )
 
         # Initialize document status storage
