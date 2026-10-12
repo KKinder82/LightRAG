@@ -30,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 
 import {
   scanNewDocuments,
+  downloadOriginalDocument,
   getFolderTree,
   getDocumentsPaginatedWithTimeout,
   DocsStatusesResponse,
@@ -45,7 +46,8 @@ import { useBackendState } from '@/stores/state'
 import { copyToClipboard } from '@/utils/clipboard'
 import FolderExplorer from '@/components/documents/FolderExplorer'
 
-import { RefreshCwIcon, ActivityIcon, ArrowUpIcon, ArrowDownIcon, RotateCcwIcon, CheckSquareIcon, XIcon, AlertTriangle, Info, CopyIcon } from 'lucide-react'
+import { RefreshCwIcon, ActivityIcon, ArrowUpIcon, ArrowDownIcon, RotateCcwIcon, CheckSquareIcon, XIcon, AlertTriangle, Info, CopyIcon, DownloadIcon } from 'lucide-react'
+import { getOriginalFileName, getDocumentElapsed, formatDocumentElapsed } from '@/features/documentFiles'
 import PipelineStatusDialog from '@/components/documents/PipelineStatusDialog'
 import {
   getStatusBucket,
@@ -432,6 +434,26 @@ export default function DocumentManager() {
   const [docs, setDocs] = useState<DocsStatusesResponse | null>(null)
 
   const currentTab = useSettingsStore.use.currentTab()
+  const [downloadingDocIds, setDownloadingDocIds] = useState<string[]>([])
+  const handleDownload = async (doc: DocStatusResponse) => {
+    setDownloadingDocIds(ids => [...ids, doc.id])
+    try {
+      const blob = await downloadOriginalDocument(doc.id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = getOriginalFileName(doc)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch {
+      toast.error(t('documentPanel.documentManager.downloadFailed'))
+    } finally {
+      setDownloadingDocIds(ids => ids.filter(id => id !== doc.id))
+    }
+  }
+
   const showFileName = useSettingsStore.use.showFileName()
   const setShowFileName = useSettingsStore.use.setShowFileName()
   const showFolderPanel = useSettingsStore.use.showFolderPanel()
@@ -1692,7 +1714,7 @@ export default function DocumentManager() {
                 <div className="absolute inset-0 flex min-h-0 flex-col p-0">
                   <div className="absolute inset-[-1px] flex flex-col p-0 border rounded-md border-gray-200 dark:border-gray-700 overflow-hidden">
                     <TooltipProvider>
-                      <Table className="w-full">
+                      <Table className="w-full min-w-[1200px] [&_th]:whitespace-nowrap">
                         <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                           <TableRow className="border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75 shadow-[inset_0_-1px_0_rgba(0,0,0,0.1)]">
                             <TableHead
@@ -1711,6 +1733,7 @@ export default function DocumentManager() {
                                 )}
                               </div>
                             </TableHead>
+                            <TableHead>{t('documentPanel.documentManager.columns.originalFileName')}</TableHead>
                             <TableHead>{t('documentPanel.documentManager.columns.summary')}</TableHead>
                             <TableHead>{t('documentPanel.documentManager.columns.status')}</TableHead>
                             <TableHead>{t('documentPanel.documentManager.columns.length')}</TableHead>
@@ -1741,6 +1764,8 @@ export default function DocumentManager() {
                                 )}
                               </div>
                             </TableHead>
+                            <TableHead>{t('documentPanel.documentManager.columns.elapsed')}</TableHead>
+                            <TableHead>{t('documentPanel.documentManager.downloadOriginal')}</TableHead>
                             <TableHead className="w-16 text-center">
                               {t('documentPanel.documentManager.columns.select')}
                             </TableHead>
@@ -1777,6 +1802,9 @@ export default function DocumentManager() {
                                   </Tooltip>
                                 )}
                               </TableCell>
+                              <TableCell className="min-w-[180px] max-w-[280px]">
+                                <div className="truncate" title={getOriginalFileName(doc)}>{getOriginalFileName(doc)}</div>
+                              </TableCell>
                               <TableCell className="max-w-xs min-w-45 truncate overflow-visible">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -1789,7 +1817,7 @@ export default function DocumentManager() {
                                   </TooltipContent>
                                 </Tooltip>
                               </TableCell>
-                              <TableCell>
+                              <TableCell className="whitespace-nowrap">
                                 <div className="flex items-center">
                                   {(() => {
                                     const statusDisplay = getStatusDisplay(doc.status)
@@ -1814,6 +1842,18 @@ export default function DocumentManager() {
                               </TableCell>
                               <TableCell className="truncate">
                                 {new Date(doc.updated_at).toLocaleString()}
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap" title={t('documentPanel.documentManager.elapsedDescription')}>
+                                {(() => {
+                                  const elapsed = getDocumentElapsed(doc)
+                                  return elapsed ? `${formatDocumentElapsed(elapsed.seconds)}${elapsed.complete ? '' : ` (${t('documentPanel.documentManager.elapsedRunning')})`}` : '-'
+                                })()}
+                              </TableCell>
+                              <TableCell>
+                                <Button size="sm" variant="outline" disabled={downloadingDocIds.includes(doc.id) || !doc.file_path || doc.file_path === 'unknown_source'} onClick={() => handleDownload(doc)} aria-label={t('documentPanel.documentManager.downloadOriginal')}>
+                                  <DownloadIcon className="size-4 mr-1" />
+                                  {t('documentPanel.documentManager.downloadOriginal')}
+                                </Button>
                               </TableCell>
                               <TableCell className="text-center">
                                 <Checkbox

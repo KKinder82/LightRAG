@@ -141,7 +141,9 @@
         "created": "Created",
         "updated": "Updated",
         "metadata": "Metadata",
-        "select": "Select"
+        "select": "Select",
+        "originalFileName": "Original filename",
+        "elapsed": "Upload to completion"
       },
       "filters": {
         "all": "All",
@@ -200,7 +202,11 @@
         "copyTooltip": "Copy status details",
         "copySuccess": "Status details copied",
         "copyFailed": "Failed to copy status details"
-      }
+      },
+      "downloadOriginal": "Download original",
+      "downloadFailed": "Unable to download the original file. It may be missing or have multiple archived versions.",
+      "elapsedRunning": "in progress",
+      "elapsedDescription": "Includes queueing, parsing, indexing and knowledge graph processing. Older records use the document creation time."
     },
     "folderExplorer": {
       "title": "Folders",

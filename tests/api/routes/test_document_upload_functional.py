@@ -152,6 +152,12 @@ async def test_new_file_upload_is_processed_and_visible(
     assert len(docs) == 1
     doc_id, doc = next(iter(docs.items()))
     assert doc.status.value == "processed", doc.error_msg
+    assert doc.metadata["upload_name"] == filename
+    assert doc.metadata["uploaded_at"] <= doc.metadata["processing_end_time"]
+    downloaded = await client.get(f"/documents/{doc_id}/download")
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == content
+    assert "attachment;" in downloaded.headers["content-disposition"]
     assert doc.chunks_list
     assert await rag.full_docs.get_by_id(doc_id)
     assert all(await rag.text_chunks.get_by_ids(doc.chunks_list))
@@ -501,3 +507,63 @@ async def test_explicit_retry_requested_during_upload_is_not_lost(upload_app, mo
     assert len(batches) == 2
     assert old_id in batches[1]
     assert (await rag.doc_status.get_by_id(old_id))["status"] == "processed"
+
+
+async def test_download_unavailable_and_unknown_document(upload_app):
+    client, rag, folder, input_dir = upload_app
+    response = await client.get("/documents/missing/download")
+    assert response.status_code == 404
+    await rag.apipeline_enqueue_documents("Text only", file_paths="absent.txt")
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PENDING)
+    doc_id = next(iter(docs))
+    response = await client.get(f"/documents/{doc_id}/download")
+    assert response.status_code == 404
+
+
+async def test_download_cannot_follow_symlink_outside_input(upload_app, tmp_path):
+    client, rag, folder, input_dir = upload_app
+    outside = tmp_path / "secret.txt"
+    outside.write_text("private")
+    (input_dir / "escape.txt").symlink_to(outside)
+    await rag.apipeline_enqueue_documents("Text", file_paths="escape.txt")
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PENDING)
+    response = await client.get(f"/documents/{next(iter(docs))}/download")
+    assert response.status_code == 404
+
+
+async def test_download_ambiguous_archives_are_rejected(upload_app):
+    client, rag, folder, input_dir = upload_app
+    await rag.apipeline_enqueue_documents("Text", file_paths="report.txt")
+    archive = input_dir / routes.PARSED_DIR_NAME
+    archive.mkdir()
+    (archive / "report_001.txt").write_text("version 1")
+    (archive / "report_002.txt").write_text("version 2")
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PENDING)
+    response = await client.get(f"/documents/{next(iter(docs))}/download")
+    assert response.status_code == 409
+
+
+async def test_same_upload_name_in_different_folders_downloads_correct_revision(upload_app):
+    client, rag, folder, input_dir = upload_app
+    other_folder = await rag.folder_manager.create_folder("Other folder")
+    for selected_folder, content in [(folder, b"first original"), (other_folder, b"second original")]:
+        response = await client.post(
+            "/documents/upload", files={"file": ("same.txt", content)},
+            data={"folder_id": selected_folder.id},
+        )
+        assert response.status_code == 200
+        docs = await rag.doc_status.get_docs_by_track_id(response.json()["track_id"])
+        doc_id, doc = next(iter(docs.items()))
+        assert doc.metadata["upload_name"] == "same.txt"
+        response = await client.get(f"/documents/{doc_id}/download")
+        assert response.status_code == 200
+        assert response.content == content
+    # The first original remains independently downloadable after the revision.
+    docs = await rag.doc_status.get_docs_by_status(routes.DocStatus.PROCESSED)
+    assert len(docs) == 2
+    for doc_id, doc in docs.items():
+        response = await client.get(f"/documents/{doc_id}/download")
+        expected = b"first original" if folder.id in doc.metadata["folder_ids"] else b"second original"
+        assert response.content == expected
+        unauthorized = await client.get(f"/documents/{doc_id}/download", headers={"X-API-Key": ""})
+        assert unauthorized.status_code in (401, 403)

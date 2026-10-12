@@ -322,6 +322,16 @@ def test_doc_status_metadata_carry_over_helper():
     )
     assert md == {"source_file_name": "demo.[mineru].pdf"}
 
+    # The upload clock survives parsing, indexing and KG transitions.
+    md = doc_status_transition_metadata(
+        _StubStatusDoc({"upload_name": "report.pdf", "uploaded_at": 12340}),
+        extra={"processing_start_time": 12345},
+    )
+    assert md == {
+        "upload_name": "report.pdf", "uploaded_at": 12340,
+        "processing_start_time": 12345,
+    }
+
     # Layers in transition extras while keeping the carry-over.
     md = doc_status_transition_metadata(
         _StubStatusDoc({"process_options": "R!"}),
@@ -356,6 +366,7 @@ def test_carry_over_keys_grouped_by_stage():
         "process_options",
         "source_file_name",
         "upload_name",
+        "uploaded_at",
         "folder_ids",
         "folder_id",
         "parse_warnings",

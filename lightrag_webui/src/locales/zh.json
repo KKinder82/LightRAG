@@ -141,7 +141,9 @@
         "created": "创建时间",
         "updated": "更新时间",
         "metadata": "元数据",
-        "select": "选择"
+        "select": "选择",
+        "originalFileName": "原始文件名",
+        "elapsed": "上传至完成耗时"
       },
       "filters": {
         "all": "全部",
@@ -200,7 +202,11 @@
         "copyTooltip": "复制状态详情",
         "copySuccess": "状态详情已复制",
         "copyFailed": "复制状态详情失败"
-      }
+      },
+      "downloadOriginal": "下载原文件",
+      "downloadFailed": "无法下载原文件，文件可能已不存在或存在多个历史版本。",
+      "elapsedRunning": "进行中",
+      "elapsedDescription": "包含排队、解析、索引和知识图谱处理时间。历史记录从文档创建时间计算。"
     },
     "folderExplorer": {
       "title": "目录",

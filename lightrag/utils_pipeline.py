@@ -225,6 +225,7 @@ _DOC_STATUS_METADATA_CARRY_OVER_KEYS: tuple[str, ...] = (
     "process_options",
     "source_file_name",
     "upload_name",
+    "uploaded_at",
     "folder_ids",
     "folder_id",
     "parse_warnings",

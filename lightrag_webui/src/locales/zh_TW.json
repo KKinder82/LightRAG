@@ -134,7 +134,9 @@
         "created": "建立時間",
         "updated": "更新時間",
         "metadata": "元資料",
-        "select": "選擇"
+        "select": "選擇",
+        "originalFileName": "原始檔案名稱",
+        "elapsed": "上傳至完成耗時"
       },
       "filters": {
         "all": "全部",
@@ -172,7 +174,11 @@
         "copyTooltip": "複製狀態詳情",
         "copySuccess": "狀態詳情已複製",
         "copyFailed": "複製狀態詳情失敗"
-      }
+      },
+      "downloadOriginal": "下載原檔案",
+      "downloadFailed": "無法下載原檔案，檔案可能已不存在或存在多個歷史版本。",
+      "elapsedRunning": "進行中",
+      "elapsedDescription": "包含排隊、解析、索引和知識圖譜處理時間。歷史記錄從文件建立時間計算。"
     },
     "pipelineStatus": {
       "title": "流水線狀態",

@@ -24,6 +24,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from lightrag.api.upload_callbacks import run_upload_with_callback
@@ -1963,6 +1964,7 @@ async def pipeline_enqueue_file(
     allow_duplicate_content: bool = False,
     fast_index: bool = False,
     upload_name: str | None = None,
+    uploaded_at: float | None = None,
 
 ) -> tuple[bool, str]:
     # MARK: 增加一个文件到处理队列
@@ -2082,6 +2084,8 @@ async def pipeline_enqueue_file(
                     enqueue_kwargs["folder_id"] = folder_id
                 if upload_name:
                     enqueue_kwargs["upload_name"] = upload_name
+                if uploaded_at is not None:
+                    enqueue_kwargs["uploaded_at"] = uploaded_at
                 # TODO: 一会儿处理。
                 enqueue_result = await rag.apipeline_enqueue_documents(
                     "", **enqueue_kwargs
@@ -2415,6 +2419,8 @@ async def pipeline_enqueue_file(
                     enqueue_kwargs["folder_id"] = folder_id
                 if upload_name:
                     enqueue_kwargs["upload_name"] = upload_name
+                if uploaded_at is not None:
+                    enqueue_kwargs["uploaded_at"] = uploaded_at
                 #MARK: 内容处理完成，进入排队流程。
                 #IMPO:
                 enqueue_result = await rag.apipeline_enqueue_documents(
@@ -3357,6 +3363,63 @@ def create_document_routes(
         )
 
     # TODO: 上传接口
+    @router.get("/{doc_id}/download", dependencies=[Depends(combined_auth)])
+    async def download_original_document(doc_id: str):
+        """Download a source file from the active workspace, never parser output."""
+        doc = await rag.doc_status.get_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        metadata = doc.get("metadata") or {}
+        stored_name = metadata.get("source_file_name") or doc.get("file_path")
+        if (
+            not isinstance(stored_name, str)
+            or not stored_name
+            or stored_name == UNKNOWN_FILE_SOURCE
+        ):
+            raise HTTPException(status_code=404, detail="Original file is unavailable")
+        # Stored names may contain parser hints. Prefer exact matches before
+        # falling back to canonical names for legacy records.
+        name = Path(stored_name).name
+        root = doc_manager.input_dir.resolve()
+        directories = [root, root / PARSED_DIR_NAME]
+        candidates = []
+        for directory in directories:
+            if not directory.resolve().is_relative_to(root):
+                continue
+            exact = directory / name
+            if exact.is_file() and exact.resolve().is_relative_to(root):
+                candidates.append(exact)
+        if not candidates:
+            canonical = normalize_file_path(name)
+            for directory in directories:
+                if (
+                    not directory.resolve().is_relative_to(root)
+                    or not directory.is_dir()
+                ):
+                    continue
+                for candidate in directory.iterdir():
+                    if (
+                        candidate.is_file()
+                        and candidate.resolve().is_relative_to(root)
+                        and canonicalize_archived_file_variant_basename(
+                            candidate.name,
+                            strip_archive_suffix=directory.name == PARSED_DIR_NAME,
+                        )
+                        == canonical
+                    ):
+                        candidates.append(candidate)
+        if not candidates:
+            raise HTTPException(status_code=404, detail="Original file is unavailable")
+        if len(candidates) != 1:
+            raise HTTPException(
+                status_code=409, detail="Multiple original file versions found"
+            )
+        download_name = metadata.get("upload_name") or name
+        download_name = str(download_name).replace("\\", "/").split("/")[-1]
+        return FileResponse(
+            candidates[0], filename=download_name, media_type="application/octet-stream"
+        )
+
     @router.post("/upload"
                  , response_model=InsertResponse
                  , dependencies=[Depends(combined_auth)]
@@ -3375,6 +3438,7 @@ def create_document_routes(
     ):
         from lightrag.kg.shared_storage import get_namespace_data, get_namespace_lock
         
+        uploaded_at = int(time.time())
         slot_reserved = False
         allocated_path: Path | None = None
         try:
@@ -3592,6 +3656,7 @@ def create_document_routes(
                                 allow_duplicate_content=True,
                                 fast_index=fast_index,
                                 upload_name=original_filename,
+                                uploaded_at=uploaded_at,
                             )
                         finally:
                             if replacing:

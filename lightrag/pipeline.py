@@ -223,6 +223,7 @@ class _PipelineMixin:
         folder_id: str | None = None,
         allow_duplicate_content: bool = False,
         upload_name: str | None = None,
+        uploaded_at: float | None = None,
     ) -> str:
         # 串行加入文档自理队伍
         """
@@ -549,6 +550,8 @@ class _PipelineMixin:
                 content_data["folder_id"] = folder_id
             if upload_name:
                 content_data["upload_name"] = upload_name
+            if uploaded_at is not None:
+                content_data["uploaded_at"] = uploaded_at
             #IMPO: 处理后的内容加入了 contents 字典，键是 doc_id，值是 content_data 包含内容、文件路径、格式、哈希等信息。
             contents[doc_id] = content_data
 
@@ -678,6 +681,8 @@ class _PipelineMixin:
                 metadata["source_file_name"] = source_file_name
             if content_data.get("upload_name"):
                 metadata["upload_name"] = content_data["upload_name"]
+            if content_data.get("uploaded_at") is not None:
+                metadata["uploaded_at"] = content_data["uploaded_at"]
             doc_folder_id = content_data.get("folder_id")
             if doc_folder_id:
                 metadata["folder_ids"] = [doc_folder_id]

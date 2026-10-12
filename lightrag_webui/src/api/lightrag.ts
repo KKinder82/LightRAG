@@ -632,6 +632,13 @@ export const getDocuments = async (): Promise<DocsStatusesResponse> => {
   return response.data
 }
 
+export const downloadOriginalDocument = async (docId: string): Promise<Blob> => {
+  const response = await axiosInstance.get(`/documents/${encodeURIComponent(docId)}/download`, {
+    responseType: 'blob'
+  })
+  return response.data
+}
+
 export const scanNewDocuments = async (): Promise<ScanResponse> => {
   const response = await axiosInstance.post('/documents/scan')
   return response.data
